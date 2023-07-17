@@ -1,0 +1,3172 @@
+---
+title: "220901_Chimerocyte_Rel_alloHCT"
+author: "Sami B. Kanaan, PhD" 
+output: html_document
+date: '2022-09-02'
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+```
+
+## 1- set up environment
+
+```{r}
+graphics.off()
+rm(list=ls())
+knitr::opts_chunk$set(fig.width=8, fig.height=6,dpi=300,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(dev.args=list(bg="transparent"))
+
+# windows
+ROOT_DIR <- "C:/Users/kanaa/Chimerocyte, Inc/Chimerocyte Office Files - Documents/Research/__- Projects/HiRes Chimersim Post-transpl Leuk Rlps"
+
+# mac
+ROOT_DIR <- "/Users/samikanaan/Library/CloudStorage/OneDrive-SharedLibraries-Chimerocyte,Inc/Chimerocyte Office Files - Documents/Research/__- Projects/HiRes Chimersim Post-transpl Leuk Rlps"
+
+# set figure pdf directory as working dir
+setwd(file.path(ROOT_DIR, "Fig_pdf"))
+getwd()
+set.seed(123)
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(plyr)
+  library(reshape2)  
+  library(ComplexHeatmap)
+  library(ggpubr)
+  library(ggplot2)
+  library(circlize)
+  library(RColorBrewer)
+  library(scales)
+  library(stringdist)
+  library(stringr)
+  library(corrplot)
+  library(heatmaply)
+  library(readxl)
+  library(gridExtra)
+  library(magrittr)
+  library(writexl)
+  library(survminer)
+  library(survival)
+  library(patchwork)
+  library(ggExtra)
+  library(broom)
+  library(ggbreak)
+  library(ggrepel)
+  library(ggthemes)
+  library(viridis)
+})
+
+col_pal2 <- c("#00CC00", "#FF0101")
+col_pal2.1 <- c("#453581", "#f1814d")
+
+```
+
+## 2- Duplex Genotyping summary for the non-HLA genotypes
+
+```{r}
+geno <- as.data.frame(read_excel(file.path(ROOT_DIR, "Multiplex_Genotyping_Summarized.xlsx"), col_names = T))
+geno1 <- subset(geno, Genotype == "heterozygous" | Genotype =="homozygous") 
+geno2 <- subset(geno, Genotype == "uncalled" | Genotype =="null") 
+
+p_geno_h <- ggplot(geno1, aes(x= Genotype, y= Targ_Ref_Ratio, fill= assay_id)) +
+  ylim(0, 1.5) +
+  #geom_violin(scale = "width", trim = T) +
+  geom_boxplot(outlier.colour="black", outlier.shape=NA, outlier.size=1, notch=FALSE)+
+  geom_jitter(shape=16, position=position_jitterdodge(.02))+ 
+  theme_few() +xlab("Genotype Calling") + ylab("Ratio (Target Qty / Ref Qty)")
+p_geno_h
+
+p_geno_u <- ggplot(geno2, aes(x= assay_id, y= Targ_Ref_Ratio, fill= Genotype)) +
+  ylim(0, 1.5) +
+  #geom_violin(scale = "width", trim = T) +
+  geom_boxplot(outlier.colour="black", outlier.shape=NA, outlier.size=1, notch=FALSE)+
+  geom_jitter(shape=16, position=position_jitterdodge(.2)) +
+  scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+  theme_few() + xlab("Assay ID") + ylab("Ratio (Target Qty / Ref Qty)")
+p_geno_u
+
+
+
+```
+
+## 3- Linearity (results proportional to target concentrations), 
+##    Reproducibility (agreement between independent test results), 
+##    Precision (closeness of results between independent tests, similar to reproducibility)
+
+```{r}
+
+repro <- as.data.frame(read_excel(file.path(ROOT_DIR, "Accu_Lin_Repr_Preci.xlsx"), col_names = T))
+repro$slopeYratio <- abs(repro$Yinter/repro$slope)
+
+
+p_repro1<- ggplot(subset(repro, assay != "B_glob"), aes(x= slope, y= Yinter, color= assay)) + 
+  ylim(34, 44)+ xlim(-4, -3.2)+
+  geom_point()+
+  geom_smooth(method=lm, color="black")+
+  xlab("Std Crv Slope") + ylab("Y-intercept (Ct where 1 DNA copy is detected)")
+
+p_repro2<- ggplot(subset(repro, assay == "B_glob"), aes(x= slope, y= Yinter, color= assay)) + 
+  ylim(34, 44)+ xlim(-4, -3.2)+
+  geom_point()+
+  geom_smooth(method=lm, color="black")+
+  xlab("Std Crv Slope") + ylab("Y-intercept (Ct where 1 DNA copy is detected)")
+
+p_repro<- grid.arrange(p_repro2, p_repro1, 
+                       ncol= 2,
+                       nrow= 1,
+                       widths= c(3.3, 4),
+                       heights= c(4))
+
+dlist <- split(repro, f = repro$assay)
+lapply(dlist, "[", , c("slopeYratio"))   # to show values in a specific column(s) you can name in c("x", "y", ...)
+
+sum <- function(x) {
+  c( "Stand dev" = sd(x), 
+     "Mean"= mean(x,na.rm=TRUE),
+     "n" = length(x),
+     "Median" = median(x), 
+     "CoeffofVariation" = abs(sd(x)/mean(x,na.rm=TRUE)),
+     "Minimum" = min(x), 
+     "Maximun" = max(x),
+     "Upper Quantile" = quantile(x,0.75), 
+     "LowerQuartile" = quantile(x,0.25))
+}
+
+## change column name in c("xx") here:
+summary <- data.frame(t(as.data.frame(lapply(lapply(dlist, "[", , c("slopeYratio")), sum)))) #t for transpose rows and columns
+summary
+summary <- summary[order(summary$Mean),]
+summary$order <- 1:nrow(summary)
+
+repro$type <- ifelse(repro$assay=="B_glob", "Reference", "Target (all)")
+p_r2 <- ggplot(repro, aes(x= type, y= r2)) +
+  ylim(.95, 1) +
+  #geom_violin(scale = "width", trim = T) +
+  geom_boxplot(outlier.colour="black", outlier.size=1, notch=FALSE)+
+  #geom_jitter(shape=16, position=position_jitterdodge(.02))+ 
+  #scale_x_discrete(guide = guide_axis(n.dodge = 3)) +
+  theme_few() +xlab("Standard Curves") + ylab("R^2")
+
+p_adj <- ggplot(repro, aes(x= "", y= adjstd)) +
+  #geom_violin(scale = "width", trim = T) +
+  geom_boxplot(outlier.colour="black", outlier.size=1, notch=FALSE)+
+  #geom_jitter(shape=16, position=position_jitterdodge(.02))+ 
+  #scale_x_discrete(guide = guide_axis(n.dodge = 3)) +
+  scale_y_log10(breaks = c(0.25, 0.5, 1, 2, 4))+
+  theme_few() +xlab("All runs") + ylab("Adjustment Coef.: Expected vs. Observed Target DNA Qty Ratios \n (Avrg. of 5 points from a Std Curve)")
+
+p_cv<- ggplot(summary, aes(x= order, y= Mean))+
+  geom_point(color = "blue", size = 2)+
+  geom_errorbar(aes(ymin = Mean-Stand.dev,ymax = Mean+Stand.dev), color = "blue")+
+  #geom_text(aes(label= rownames(summary)),hjust=0, vjust=0)+
+  geom_label_repel(aes(label = rownames(summary)),
+                   box.padding   = 0.4, 
+                   point.padding = 0.2,
+                   force         = 200,
+                   #direction     = "x",
+                   segment.color = 'grey50')+
+  theme_few() +
+  xlab("Rank") + 
+  ylab("|Slope| / Yintercept (mean ± std.dev. for each assay)")+
+  theme(axis.text.x = element_blank())+
+  annotate(geom="text", 
+           x=15, y=12.5, 
+           label=capture.output(cat("Mean Coef.Var.=",
+                                    format(round(100*mean(summary$CoeffofVariation, na.rm=TRUE), 1), nsmall = 1), 
+                                    "% (range:",
+                                    format(round(100*min(summary$CoeffofVariation, na.rm=TRUE), 1), nsmall = 1),
+                                    "% - ",
+                                    format(round(100*max(summary$CoeffofVariation, na.rm=TRUE), 1), nsmall = 1),
+                                    "%) ")),
+           size = 3.5)
+
+p_r2_adj<- grid.arrange(p_r2, p_adj, p_cv,
+                        ncol= 3,
+                        nrow= 1,
+                        widths= c(2, 1.5, 3.5),
+                        heights= c(4))
+
+
+
+
+```
+## 4- positive/negative cell line screening
+
+```{r}
+
+matx <- data.frame(read_excel(file.path(ROOT_DIR, "CellLineScreening_Matrix.xlsx"), col_names = T))
+
+row <- matx$...1
+matx$...1 <- NULL
+row.names(matx) <- row
+rm(row)
+matx <- t(matx)
+matx <- as.matrix(matx)
+class(matx) <- "character" # to change it back to numeric, just type in "numeric"
+
+exp_colors<-c(#"grey85", 
+  #"chartreuse", 
+  "orange", 
+  "red", 
+  "black")
+
+p_hm<- Heatmap(matx, 
+               col = exp_colors,
+               #na_col = "black",
+               name = "Positive \nAmplification",
+               column_names_gp = grid::gpar(fontsize = 8),
+               row_names_gp = grid::gpar(fontsize = 8))
+
+
+```
+## 5- Analytic Sensitivity: detecting low Target DNA qty in different DNA background levels
+
+```{r}
+
+col_fun <- colorRamp2(c(31, 38, 45), c("green", "black", "red"))
+
+mat_ct <- data.frame(read_excel(file.path(ROOT_DIR, "AssaySensitivity_Ct_1_4_16gEq.xlsx"), col_names = T), check.names=F)
+row.names(mat_ct) <- mat_ct[,1]
+mat_ct <- mat_ct[,-1]
+#mat_ct <- mat_ct[-c(1,2,13,14,25,26),] 
+
+mat_l <- list()
+bckg <- c("60K", "25K", "10K")
+for (i in seq_along(bckg)){
+  mat_l[[i]] <- mat_ct %>% filter(str_detect(row.names(mat_ct), bckg[[i]]))
+}
+names(mat_l) <- c("60K gEq non-target DNA", "25K gEq non-target DNA", "10K gEq non-target DNA")
+
+
+#Heatmap(mat_l[[1]], 
+#        name = "Cycle at\nThreshold", 
+#        column_names_rot = 45, 
+#        column_names_side = "top", 
+#        show_column_dend = F, 
+#        #split = 3,
+#        #column_order = sort(colnames(mat_l[[1]])),
+#        col = col_fun)
+
+P_sens <- Heatmap(mat_ct, 
+                  #name = "Cycle at\nThreshold",
+                  heatmap_legend_param = list(title = "Cycle at\nThreshold", title_gp = grid::gpar(fontsize = 8, fontface = "bold")),
+                  column_names_rot = 45, 
+                  column_names_side = "top", 
+                  show_column_dend = T,
+                  column_dend_side = "bottom",
+                  row_names_side = "left",
+                  row_dend_side = "right",
+                  row_title_side = "left",
+                  row_split = c(rep("60,000 gEq \nnon-target DNA", 12),  # 
+                                rep("25,000 gEq \nnon-target DNA", 12),  # 
+                                rep("10,000 gEq \nnon-target DNA", 12)), # 
+                  #split = 3,
+                  #column_order = sort(colnames(mat_l[[1]])),
+                  col = col_fun,
+                  column_names_gp = grid::gpar(fontsize = 8),
+                  row_names_gp = grid::gpar(fontsize = 8),
+                  row_title_gp = grid::gpar(fontsize = 8),
+                  cluster_rows = FALSE) # because the NTC rows ar all NAs, clustering row will return an error: "NA/NaN/Inf in foreign function call (arg 10)", thus set to FALSE (cluster_columns is TRUE by default)
+P_sens
+
+
+```
+## 6- loading Chimersim data
+
+```{r}
+
+{
+  chimHCT <- data.frame(read_excel(file.path(ROOT_DIR, "Chimerism_data_VNTR_and_Q-PCR_GOLD_December2022.xlsx"), col_names = T, sheet = "Chim_AllMaterial_present(n=298)"), check.names=F)
+  chimHCT <- chimHCT[,-c(7,8)]
+}
+
+chimhct <- subset(chimHCT, !is.na(Pr_Chim) 
+                  & is.na(Excl) 
+                  #& avail_timep != "post_rel" 
+                  #& avail_timep != "post_rel_window"
+)
+chimhct <- transform(chimhct, txage = as.numeric(txage))
+chimhct$Chim_MFC0 <- NA
+chimhct$Chim_MFC0 <- ifelse(chimhct$pre_tx_MRD_MFC_BMA>0, 
+                            chimhct$Chim_MFC0 <- 1, 
+                            ifelse(chimhct$pre_tx_MRD_MFC_BMA==0, 
+                                   chimhct$Chim_MFC0 <- 0,
+                                   chimhct$Chim_MFC0 <- NA
+                            )
+)
+
+chimmrd <- subset(chimHCT, mrd_posttx_select=="BMA")
+chimmrd <- transform(chimmrd, txage = as.numeric(txage))
+chimmrd$Chim_MFC0 <- NA
+chimmrd$Chim_MFC0 <- ifelse(chimmrd$pre_tx_MRD_MFC_BMA>0, 
+                            chimmrd$Chim_MFC0 <- 1, 
+                            ifelse(chimmrd$pre_tx_MRD_MFC_BMA==0, 
+                                   chimmrd$Chim_MFC0 <- 0,
+                                   chimmrd$Chim_MFC0 <- NA
+                            )
+)
+table(chimHCT[!duplicated(chimHCT$upn),]$dxgroup)
+table(chimhct[!duplicated(chimhct$upn),]$dxgroup)
+
+## numbers of MFC pre-tx survival (any >0 is positive) in PB right at transplant
+table(chimhct$Chim_MFC0, useNA = "ifany")
+table(chimmrd$Chim_MFC0, useNA = "ifany")
+table(chimhct[!duplicated(chimhct$upn),]$Chim_MFC0, useNA = "ifany")
+table(chimmrd[!duplicated(chimmrd$upn),]$Chim_MFC0, useNA = "ifany")
+table(chimhct[!duplicated(chimhct$upn),]$Chim_MFC0, chimhct[!duplicated(chimhct$upn),]$status_int, useNA = "ifany")
+table(chimhct[!duplicated(chimhct$upn),]$delrel, chimhct[!duplicated(chimhct$upn),]$status_int, useNA = "ifany")
+
+
+chimhct$Chim_MFC_PB <- ifelse(chimhct$pre_tx_MRD_MFC_PB>0, 
+                              chimhct$Chim_MFC_PB <- 1, 
+                              ifelse(chimhct$pre_tx_MRD_MFC_PB==0, 
+                                     chimhct$Chim_MFC_PB <- 0,
+                                     chimhct$Chim_MFC_PB <- NA
+                              )
+)
+table(chimhct[!duplicated(chimhct$upn),]$Chim_MFC_PB, useNA = "ifany")
+
+
+```
+## 7- Chimerocyte vs. VNTR 
+##    HLA vs. non-HLA
+
+```{r}
+
+i <- 1   # try 1 or 2 or 3 or 4
+m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+
+corr <- cor.test(subset(chimhct, material...69 ==m[[i]])$Pr_Chim_0, 
+                 subset(chimhct, material...69 ==m[[i]])$Pr_VNTR_0, 
+                 method = "spearman")
+cor2 <- cor.test(subset(chimhct, material...69 ==m[[i]]&Pr_VNTR_0>=0.01)$Pr_Chim_0, 
+                 subset(chimhct, material...69 ==m[[i]]&Pr_VNTR_0>=0.01)$Pr_VNTR_0, 
+                 method = "spearman")
+p_sl1<- ggplot(subset(chimhct, material...69 ==m[[i]]), aes(x= Pr_VNTR_0, y= Pr_Chim_0)) +
+  geom_point(size = 2, alpha = 0.15, color = "red") +
+  geom_abline(linetype = "dashed", color = "blue", size = 0.5, alpha = 1) +
+  #annotation_logticks() +
+  geom_errorbar(aes(ymin = Lo_95_CI_0,ymax = Up_95_CI_0), color = "red", width = 0.1, alpha = 0.5)+
+  scale_y_log10(name = "", #proportion recipient (Chimerocyte)
+                breaks = c(0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels = c("Not-Det", c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1))) +
+  scale_x_log10(name = "", #proportion recipient (VNTR)
+                breaks = c(0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels = c("Not-Det", c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1))) +
+  coord_fixed(ratio = 1, xlim = c(0.0000001,1), ylim = c(0.0000001,1)) + 
+  #stat_density_2d(alpha=0.3, aes(fill = ..level..), geom="polygon") +
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  annotate(geom="text", 
+           x=5e-5, y=1, 
+           label=capture.output(cat("spearman r (all data) =", 
+                                    format(round(corr$estimate, 3), nsmall = 1))),
+           size = 3.25)+
+  annotate(geom="text", 
+           x=5e-5, y=0.3, 
+           label=capture.output(cat("spearman r (str>0.01)=", #(str≥0.01)
+                                    #formatC(corr$p.value, format = "e", digits = 1),
+                                    format(round(cor2$estimate, 3), nsmall = 1))),
+           size = 3.25)
+
+ggMarginal(p_sl1,
+           groupColour = F,
+           groupFill = F,
+           margins = "both",
+           type = "density",
+           size = 5,
+           xparams = list(binwidth = .1, fill = "red", col = "red", alpha = 0.15),
+           yparams = list(binwidth = .1, fill = "red", col = "red", alpha = 0.15)
+)  
+
+ggplot(subset(chimhct, !is.na(Pr_Chim_2nd) & 
+                Marker_1st == "hla" &    #try "hla" vs. "nonhla"
+                #Pr_Chim_2nd >0 & 
+                #Pr_Chim >0 & 
+                material...69 == m[[i]]), 
+       aes(x= Pr_Chim_2nd_0, y= Pr_Chim_0)) +
+  geom_point(size = 2, alpha = 0.2, color = "red") +
+  geom_abline(linetype = "dashed", color = "blue", size = 1, alpha = 0.5) +
+  annotation_logticks() +
+  geom_errorbar(aes(xmin = Lo_95_CI_2nd_0,
+                    xmax = Up_95_CI_2nd_0),
+                color = "red", width = 0.1)+
+  geom_errorbar(aes(ymin = Lo_95_CI_0,
+                    ymax = Up_95_CI_0),
+                color = "red", width = 0.1) +
+  scale_y_log10(name = "proportion recipient (HLA target)",
+                breaks = c(0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels = c("Not-Det", c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1))) +
+  scale_x_log10(name = "proportion recipient (non-HLA target)",
+                breaks = c(0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels = c("Not-Det", c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1))) +
+  coord_fixed(ratio = 1, xlim = c(0.0000001,1), ylim = c(0.0000001,1)) + 
+  #stat_density_2d(alpha=0.3, aes(fill = ..level..), geom="polygon") +
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+```
+## 8- Histogram of relapse and death
+
+```{r}
+length(unique(chimhct$upn)) -
+  nrow(chimhct[!duplicated(chimhct$upn),]) ## this subtraction should be zero
+
+i <- 1   # try 1 or 2 or 3 or 4
+m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+
+nrow(subset(chimhct, material...69 == m[[i]])[!duplicated(subset(chimhct, material...69 == m[[i]])$upn),]) -
+  nrow(subset(chimhct, material...69 == m[[i]] & avail_timep == "multi_last" | 
+                material...69 == m[[i]] & avail_timep == "single")) ## this subtraction should give the numbers that are excluded due to post relapse timepoint or post relapse window
+
+# some stats and counts:
+nrow(subset(chimhct, material...69 == m[[i]]))
+nrow(subset(chimhct, material...69 == m[[i]])
+     [!duplicated(subset(chimhct, material...69 == m[[i]])$upn),])
+
+nrow(subset(chimhct, material...69 == m[[i]] & av_tp == "s"))
+nrow(subset(chimhct, material...69 == m[[i]] & av_tp == "s")
+     [!duplicated(subset(chimhct, material...69 == m[[i]] & av_tp == "s")$upn),])
+
+nrow(subset(chimhct, material...69 == m[[i]] & av_tp == "m" |
+              material...69 == m[[i]] & av_tp == "ml"))
+nrow(subset(chimhct, material...69 == m[[i]] & av_tp == "ml")
+     [!duplicated(subset(chimhct, material...69 == m[[i]] & av_tp == "m" |
+                           material...69 == m[[i]] & av_tp == "ml")$upn),])
+
+nrow(subset(chimhct, av_tp == "s"))
+nrow(subset(chimhct, av_tp == "s")
+     [!duplicated(subset(chimhct, av_tp == "s")$upn),])
+
+nrow(subset(chimhct, av_tp == "m" |
+              av_tp == "ml"))
+nrow(subset(chimhct, av_tp == "ml")
+     [!duplicated(subset(chimhct, av_tp == "m" |
+                           av_tp == "ml")$upn),])
+
+# constructing histograms
+chimhct_u <- chimhct[!duplicated(chimhct$upn),]
+unique(chimhct_u$dxgroup)
+length(chimhct_u$upn)
+length(unique(chimhct_u$upn)) - length(chimhct_u$upn) ## this subtraction should be zero
+
+# [optional] visualize dataframe in excel
+write_xlsx(chimhct_u, "test_df.xlsx", col_names=TRUE)
+
+table(chimhct_u$inform_hla, chimhct_u$delrel, useNA = "ifany")
+
+# day at threshold:
+dt <- 540
+
+# relapse histogram
+ggplot(chimhct_u, aes(x= relday))+
+  geom_histogram(aes(y=..density..), colour="black", fill="orange", bins = 150)+
+  geom_density(alpha=.2, fill="#FF6666")+
+  scale_x_continuous(name = "day of relapse post-HCT", breaks = scales::breaks_width(360))+
+  geom_vline(xintercept = dt, linetype = "dashed", color = "blue", size = 1, alpha = 0.5) +
+  theme_few()+theme(aspect.ratio = 0.33)
+# proportion of relapse on or before day 540
+table(chimhct_u$relday <= dt)["TRUE"] / (table(chimhct_u$relday <= dt)["TRUE"]+table(chimhct_u$relday <= dt)["FALSE"])
+
+# death histogram
+ggplot(subset(chimhct_u, delsur ==1), aes(x= daysur))+
+  geom_histogram(aes(y=..density..), colour="black", fill="orange", bins = 150)+
+  geom_density(alpha=.2, fill="#FF6666")+
+  scale_x_continuous(name = "day of death post-HCT", breaks = scales::breaks_width(360))+
+  geom_vline(xintercept = dt, linetype = "dashed", color = "blue", size = 1, alpha = 0.5) +
+  theme_few()+theme(aspect.ratio = 0.33)
+# proportion of death on or before day 540
+table(subset(chimhct_u, delsur ==1)$daysur <= dt)["TRUE"] / (table(subset(chimhct_u, delsur ==1)$daysur <= dt)["TRUE"]+table(subset(chimhct_u, delsur ==1)$daysur <= dt)["FALSE"])
+
+
+```
+## 9- Checking confounding covariates: MFC pre-tx survival (any >0 is positive)
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33" "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"        "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"               "ALL"
+
+{
+  chimsurv <- chimhct[!duplicated(chimhct$upn),]
+  
+  chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+  
+  
+  
+  fit <- survfit(Surv(relday, delrel) ~ Chim_MFC0, data = chimsurv)
+  cox <-   coxph(Surv(relday, delrel) ~ Chim_MFC0, data = chimsurv) #should be same as above!!
+}
+summary(cox)
+## construct the survival plots and cox hazard ratios
+{
+  p_surv <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      c("#00CC00", "#FF0101"),        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value
+    #pval.coord = c(0, 0.985),
+    #pval.size = 4,
+    risk.table = TRUE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("MRD-neg", "MRD-pos"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_surv$plot <- p_surv$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR=",
+                                 format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )
+}
+p_surv
+
+
+```
+## 10- Checking confounding covariates: Diagnostic group
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33"       "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"    "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"           "ALL"
+
+{
+  chimsurv <- chimhct[!duplicated(chimhct$upn),]
+  
+  chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+  
+  fit <- survfit(Surv(relday, delrel) ~ dxgroup, data = chimsurv)
+  cox <-   coxph(Surv(relday, delrel) ~ dxgroup, data = chimsurv) #should be same as above!!
+}
+summary(cox)
+## construct the survival plots and cox hazard ratios
+{
+  p_surv <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      c("#00CC00", "#FF0101", "blue"),        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value
+    #pval.coord = c(0, 0.985),
+    #pval.size = 4,
+    risk.table = TRUE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("ALL", "AML", "MDS"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_surv$plot <- p_surv$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(AML v. ALL)=",
+                                 format(round(summary(cox)[["conf.int"]][1,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][1,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][1,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.95,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(MDS v. ALL)=",
+                                 format(round(summary(cox)[["conf.int"]][2,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][2,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][2,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )
+  
+}
+p_surv
+
+
+```
+## 11- Checking confounding covariates: GVHD Prophylaxis
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33" "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"        "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"               "ALL"
+colnames(chimhct)
+{
+  chimsurv <- chimhct[!duplicated(chimhct$upn),]
+  
+  chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+  
+  fit <- survfit(Surv(relday, delrel) ~ pro_gvhd_cat, data = chimsurv)
+  cox <-   coxph(Surv(relday, delrel) ~ pro_gvhd_cat, data = chimsurv) #should be same as above!!
+}
+summary(cox)
+
+## construct the survival plots and cox hazard ratios
+{
+  p_surv <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      c("#00CC00", "#FF0101", "blue", "blueviolet"),        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value
+    #pval.coord = c(0, 0.985),
+    #pval.size = 4,
+    risk.table = TRUE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("CSP\n+MMF", "CSP\n+MTX", "FK506\n+MMF", "FK506\n+MTX"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_surv$plot <- p_surv$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(CSP+MTX v. CSP+MMF)=",
+                                 format(round(summary(cox)[["conf.int"]][1,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][1,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][1,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 2.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.95,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(FK506+MMF v. CSP+MMF)=",
+                                 format(round(summary(cox)[["conf.int"]][2,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][2,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][2,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 2.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.85,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(FK506+MTX v. CSP+MMF)=",
+                                 format(round(summary(cox)[["conf.int"]][3,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][3,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][3,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 2.5
+    )
+  
+}
+p_surv
+
+
+```
+## 12- Checking confounding covariates: Conditioning
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33"       "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"    "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"           "ALL"
+colnames(chimhct)
+{
+  chimsurv <- chimhct[!duplicated(chimhct$upn),]
+  
+  chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+  
+  fit <- survfit(Surv(relday, delrel) ~ Conditioning, data = chimsurv)
+  cox <-   coxph(Surv(relday, delrel) ~ Conditioning, data = chimsurv) #should be same as above!!
+}
+summary(cox)
+## construct the survival plots and cox hazard ratios
+{
+  p_surv <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      c("#00CC00", "#FF0101", "blue", "blueviolet"),        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value
+    #pval.coord = c(0, 0.985),
+    #pval.size = 4,
+    risk.table = TRUE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("TBI\n1200-1320", "TBI\n200", "TBI\n300-400", "no TBI"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_surv$plot <- p_surv$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(low v. hi)=",
+                                 format(round(summary(cox)[["conf.int"]][1,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][1,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][1,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.95,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(med v. hi)=",
+                                 format(round(summary(cox)[["conf.int"]][2,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][2,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][2,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.85,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(noTBI v. hi)=",
+                                 format(round(summary(cox)[["conf.int"]][3,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][3,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][3,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )
+  
+}
+p_surv
+
+
+```
+## 13- Checking confounding covariates: Transplat type
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33"       "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"    "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"           "ALL"
+colnames(chimhct)
+{
+  chimsurv <- chimhct[!duplicated(chimhct$upn),]
+  
+  chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+  
+  fit <- survfit(Surv(relday, delrel) ~ txtype, data = chimsurv)
+  cox <-   coxph(Surv(relday, delrel) ~ txtype, data = chimsurv) #should be same as above!!
+}
+summary(cox)
+## construct the survival plots and cox hazard ratios
+{
+  p_surv <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      c("#00CC00", "#FF0101", "blue"),        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value
+    #pval.coord = c(0, 0.985),
+    #pval.size = 4,
+    risk.table = TRUE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("CordBlood", "Rel/Haplo", "URD"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_surv$plot <- p_surv$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(Rel v. CB)=",
+                                 format(round(summary(cox)[["conf.int"]][1,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][1,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][1,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.95,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(URD v. CB)=",
+                                 format(round(summary(cox)[["conf.int"]][2,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][2,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][2,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )
+  
+}
+p_surv
+
+
+```
+## 14- Checking confounding covariates: Ancestral Background
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33" "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"        "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"               "ALL"
+colnames(chimhct)
+{
+  chimsurv <- chimhct[!duplicated(chimhct$upn),]
+  
+  chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+  
+  fit <- survfit(Surv(relday, delrel) ~ ancestral, data = chimsurv)
+  cox <-   coxph(Surv(relday, delrel) ~ ancestral, data = chimsurv) #should be same as above!!
+}
+summary(cox)
+
+## construct the survival plots and cox hazard ratios
+{
+  p_surv <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      c("#00CC00", "#FF0101"),        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value
+    #pval.coord = c(0, 0.985),
+    #pval.size = 4,
+    risk.table = TRUE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("Caucasian", "Other/Mixed"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_surv$plot <- p_surv$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR=",
+                                 format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )
+}
+p_surv
+
+
+```
+## 15- Checking confounding covariates: Sex
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33" "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"        "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"               "ALL"
+colnames(chimhct)
+{
+  chimsurv <- chimhct[!duplicated(chimhct$upn),]
+  
+  chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+  
+  fit <- survfit(Surv(relday, delrel) ~ sex, data = chimsurv)
+  cox <-   coxph(Surv(relday, delrel) ~ sex, data = chimsurv) #should be same as above!!
+}
+summary(cox)
+
+## construct the survival plots and cox hazard ratios
+{
+  p_surv <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      c("#00CC00", "#FF0101"),        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value
+    #pval.coord = c(0, 0.985),
+    #pval.size = 4,
+    risk.table = TRUE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("Female", "Male"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_surv$plot <- p_surv$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR=",
+                                 format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )
+}
+p_surv
+
+
+```
+## 16- Checking confounding covariates: Informative Assay
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33" "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"        "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"               "ALL"
+colnames(chimhct)
+{
+  chimsurv <- chimhct[!duplicated(chimhct$upn),]
+  
+  chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+  
+  fit <- survfit(Surv(relday, delrel) ~ inform_hla, data = chimsurv)
+  cox <-   coxph(Surv(relday, delrel) ~ inform_hla, data = chimsurv) #should be same as above!!
+}
+summary(cox)
+
+## construct the survival plots and cox hazard ratios
+{
+  p_surv <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      c("#00CC00", "#FF0101"),        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value
+    #pval.coord = c(0, 0.985),
+    #pval.size = 4,
+    risk.table = TRUE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("non-HLA only assays", "incl. HLA assays"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_surv$plot <- p_surv$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR=",
+                                 format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )
+}
+p_surv
+
+```
+## 17- Checking confounding covariates: Disease status at transplant
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33" "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"        "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"               "ALL"
+colnames(chimhct)
+{
+  chimsurv <- chimhct[!duplicated(chimhct$upn),]
+  
+  chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+  
+  fit <- survfit(Surv(relday, delrel) ~ status_int, data = chimsurv)
+  cox <-   coxph(Surv(relday, delrel) ~ status_int, data = chimsurv) #should be same as above!!
+}
+summary(cox)
+
+## construct the survival plots and cox hazard ratios
+{
+  p_surv <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      c("#00CC00", "#FF0101", "blue", "blueviolet", "violetred4"),        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value
+    #pval.coord = c(0, 0.985),
+    #pval.size = 4,
+    risk.table = TRUE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("ActiveDis", "CR1", "CR2", "CR3", "Undef"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_surv$plot <- p_surv$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(CR1 v. AD)=",
+                                 format(round(summary(cox)[["conf.int"]][1,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][1,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][1,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.95,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(CR2 v. AD)=",
+                                 format(round(summary(cox)[["conf.int"]][2,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][2,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][2,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.85,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(CR3 v. AD)=",
+                                 format(round(summary(cox)[["conf.int"]][3,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][3,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][3,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.75,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR(Undef v. AD)=",
+                                 format(round(summary(cox)[["conf.int"]][4,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][4,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][4,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )
+}
+p_surv
+
+```
+## 18- Chimerism as a function of time post transplant
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33" "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"        "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"               "ALL"
+
+
+i <- 2   # try 1 or 2 or 3 or 4
+m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+dt <- 540 # max days post-tx to show
+chimsi <- chimhct
+#removing samples that self-fulfill the prophecy
+chimsi <- within(chimsi, { 
+  a <- avail_timep == "multi" & proph == "multi_last_if_SFProph_remv"
+  b <- avail_timep == "multi" & proph == "single_if_SFProph_remv"
+  c <- avail_timep == "multi_last" & proph == "Self_Fullf_Proph"
+  d <- avail_timep == "single" & proph == "Self_Fullf_Proph"
+  avail_timep[a] <- "multi_last"
+  avail_timep[b] <- "single"
+  avail_timep[c] <- NA
+  avail_timep[d] <- NA
+})
+chimsi <- chimsi[which(chimsi$material...69 %in% m[[i]]
+                       & chimsi$avail_timep %in% c("multi_last", 
+                                                   "multi",
+                                                   "single") 
+                       & chimsi$dxgroup %in% c("MDS", "ANL", "ALL")
+),]
+
+table(chimsi$dxgroup)
+length(unique(chimsi$upn))
+
+p_si1 <- ggplot(chimsi, aes(x= day_chim, y= Pr_Chim_0, color= factor(delrel))) +
+  geom_point(size = 2, alpha = 0.4) +
+  #annotation_logticks() +
+  geom_errorbar(aes(ymin = Lo_95_CI_0,ymax = Up_95_CI_0), alpha = 0.4, width=5, position=position_dodge(0.05))+
+  scale_y_log10(name = "", #proportion recipient
+                breaks = c(0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels = c("Not-Det", c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1))) +
+  scale_x_continuous(name = "", breaks = scales::breaks_width(60))+ #name = "days post-HCT"
+  #geom_smooth(method=lm)+
+  coord_fixed(ratio = (dt/7), xlim = c(0, dt), ylim = c(0.0000001, 1))+
+  #stat_density_2d(alpha=0.3, aes(fill = ..level..), geom="polygon") +
+  labs(color = "will relapse")+
+  scale_color_manual(values = col_pal2.1,
+                     labels = c("no", "yes"))+
+  theme_few()+
+  theme(legend.position = "top",
+        legend.title = element_text(size=10),
+        legend.background = element_blank())
+
+ggMarginal(p_si1,
+           groupColour = TRUE,
+           groupFill = TRUE,
+           margins = "y"
+)
+
+# for more viridis colors, check out this: https://waldyrious.net/viridis-palette-generator/
+# show_col(viridis_pal()(3))
+
+
+#p_si2 <-ggplot(chimsi, aes(x= day_chim, fill= factor(delrel))) +
+#        geom_density(size = 1, alpha = 0.5) +
+#        scale_x_continuous(name = element_blank(), breaks = scales::breaks_width(30))+
+#        theme_void()+
+#        theme(legend.position = "none",
+#              axis.title.x=element_blank(),
+#              axis.text.x=element_blank(),
+#              plot.margin=unit(c(0,0,-10,0), "cm"))
+#p_si3 <-ggplot(chimsi, aes(x= Pr_Chim_0, fill= factor(delrel))) +
+#        geom_density(size = 1, alpha = 0.5) +
+#        scale_x_log10(name = "proportion recipient",
+#                      breaks = c(0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+#                      labels = c("Not-Det", c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1))) +
+#        theme_void()+
+#        coord_flip()+
+#        theme(legend.position = "none",
+#              axis.title.y=element_blank(),
+#              axis.text.y=element_blank())
+#ggarrange(p_si2, NULL, p_si1, p_si3, 
+#          ncol = 2, nrow = 2,
+#          widths = c(5, 1), heights = c(1, 5),
+#          align = "hv",
+#          common.legend = TRUE) +labs(color = "relapse")
+
+
+
+gc()
+
+```
+## 19- Survival: Chimerism Absolute Values as a time-dependent covariate
+
+```{r}
+
+i <- 1   # try 1 or 2 or 3 or 4 to select specimen type
+m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+chimsurvds <- chimhct
+#removing samples that self-fulfill the prophecy
+chimsurvds <- within(chimsurvds, { 
+  a <- avail_timep == "multi" & proph == "multi_last_if_SFProph_remv"
+  b <- avail_timep == "multi" & proph == "single_if_SFProph_remv"
+  c <- avail_timep == "multi_last" & proph == "Self_Fullf_Proph"
+  d <- avail_timep == "single" & proph == "Self_Fullf_Proph"
+  avail_timep[a] <- "multi_last"
+  avail_timep[b] <- "single"
+  avail_timep[c] <- NA
+  avail_timep[d] <- NA
+})
+
+# select your disease group(s)
+chimsurvds <- chimsurvds[which(chimsurvds$material...69 %in% m[[i]]
+                               & chimsurvds$avail_timep %in% c("multi_last", "multi", "single") 
+                               & chimsurvds$dxgroup %in% c("MDS", "ANL", "ALL")
+),]
+
+rm(pval_dfe)
+for (n in c(0.00001 %o% 1.114268107^(1:100))) { 
+  #set cutoff threshold
+  {
+    Ct <- n
+    chimsurvds$Chim_td0 <- NA
+    chimsurvds$Chim_td0 <- ifelse(chimsurvds$Pr_Chim_0>Ct, #try Pr_VNTR_0 as a comparative
+                                  chimsurvds$Chim_td0 <- 1,
+                                  chimsurvds$Chim_td0 <- 0)
+    
+    #chimsurvds$relday <- ifelse(is.na(chimsurvds$relday), chimsurvds$daysur, chimsurvds$relday)
+    
+    fit <-   survfit(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td0, data = chimsurvds, id = upn)
+    cox <-     coxph(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td0, data = chimsurvds, id = upn) #should be same as above!!
+    cox_adj <- coxph(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td0 +txtype +pro_gvhd_cat +dxgroup +Chim_MFC0 +status_int, data = chimsurvds, id = upn)
+    ## construct the survival plots and cox hazard ratios
+    ggsurvplot(fit, data = chimsurvds)
+    
+    p_survds <- ggsurvplot(
+      fit,
+      data = chimsurvds,
+      size = 1,                       # change line size
+      palette =
+        col_pal2,        # custom color palettes
+      #conf.int = TRUE,                  # Add confidence interval
+      #conf.int.style = "step",          # customize style of confidence intervals
+      #pval = TRUE,                      # Add p-value {UNSOLVED: Cannot compute pvalue when using interval censoring}
+      #pval.coord = c(0, 0.985),
+      #pval.size = 4,
+      risk.table = FALSE,                # Add risk table
+      risk.table.col = "strata",        # Risk table color by groups
+      legend.labs =
+        c(print(paste("Chim =<", Ct)), print(paste("Chim >", Ct))),            # Change legend labels
+      risk.table.height = 0.25,         # Useful to change when you have multiple groups
+      ggtheme = theme_few()+theme(aspect.ratio = 1),
+      censor.shape = "|",
+      censor.size = 3,
+      xlim = c(0,1825),                 # present narrower X axis, but not affect
+      xlab = "",      # days post-allo-HCT
+      ylim = c(0,1),
+      ylab= "",  #fraction relapse (cumulative)
+      break.time.by = 365,              # break X axis in time intervals by 'n'.
+      risk.table.y.text.col = T,        # color risk table text annotations.
+      risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+      #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+      #ncensor.plot.height = 0.25,
+      surv.median.line = "hv",          # add the median survival pointer.
+      tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+      fontsize = 3, 
+      legend.title="",
+      fun = "event" 
+    )
+    p_survds$plot <- p_survds$plot + 
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = Inf,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("HR=",
+                                   format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3.5
+      )+
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = 0.95,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("adj.HR=",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3.5
+      )
+    p_survds
+    length(unique(chimsurvds$upn))
+    length(unique(chimsurvds[!is.na(chimsurvds$Chim_td0),]$upn))
+    tabl <- chimsurvds[!is.na(chimsurvds$Chim_td0),]
+    table(tabl[!duplicated(tabl$upn),]$Chim_td0)
+    summary(fit)$table[1,"n.max"]
+    summary(fit)$table[2,"n.max"]
+    summary(fit)$table
+    
+    ## creating 2x2 confusion matrices
+    { ## defining variables
+      n.maxremi <- summary(fit)$table[1,"n.max"]
+      n.maxrlps <- summary(fit)$table[2,"n.max"]
+      srv0.remi <- summary(fit, times = 1825, extend = T)$surv[1]   # times = first 5 yrs
+      srv0.rlps <- 1-summary(fit, times = 1825, extend = T)$surv[1] # times = first 5 yrs
+      srv1.remi <- summary(fit, times = 1825, extend = T)$surv[2]   # times = first 5 yrs
+      srv1.rlps <- 1-summary(fit, times = 1825, extend = T)$surv[2] # times = first 5 yrs
+      tp <- n.maxrlps*srv1.rlps
+      fp <- n.maxrlps*srv1.remi
+      fn <- n.maxremi*srv0.rlps
+      tn <- n.maxremi*srv0.remi
+      mt <- matrix(c(tp,fn,fp,tn), nrow = 2)
+      ## determining heatmap labels
+      ye <- capture.output(cat("Yes \n(n.max=",
+                               format(round(n.maxrlps), nsmall = 0),
+                               ")"))
+      ye <- paste(ye, collapse = '\n')
+      no <- capture.output(cat("No \n(n.max=",
+                               format(round(n.maxremi), nsmall = 0),
+                               ")"))
+      no <- paste(no, collapse = '\n')
+      row.names(mt)<- c(ye, no)
+      colnames(mt)<- c("relapse", "remission")
+      row_perc <- prop.table(mt, margin = 1)*100
+      col_perc <- prop.table(mt, margin = 2)*100
+      sens <- col_perc[1,1]/100
+      spec <- col_perc[2,2]/100
+      ## drawing Heat Map
+      col_fun <- colorRamp2(c(0, 50, 100), c("#440154", "#21918c", "#fde725")) #https://waldyrious.net/viridis-palette-generator/
+      sz <- 11
+      ti<- capture.output(cat("sensitivity",
+                              format(round(sens, digits = 3), nsmall = 3),
+                              "\nspecificity",
+                              format(round(spec, digits = 3), nsmall = 3),
+                              "\n\npercent of rows"))
+      ti <- paste(ti, collapse = '\n')
+      
+      Heatmap(row_perc,
+              heatmap_legend_param = list(title = ti, 
+                                          title_gp = grid::gpar(fontsize = sz, fontface = "bold"),
+                                          labels_gp = grid::gpar(fontsize = sz)),
+              column_names_rot = 90,
+              column_names_side = "top",
+              show_column_dend = T,
+              column_dend_side = "bottom",
+              row_names_side = "left",
+              row_dend_side = "right",
+              row_title_side = "left",
+              col = col_fun,
+              column_names_gp = grid::gpar(fontsize = sz*1.2),
+              row_names_gp = grid::gpar(fontsize = sz),
+              row_title_gp = grid::gpar(fontsize = sz*1.2),
+              cluster_rows = FALSE,
+              cluster_columns = FALSE,
+              width = ncol(col_perc)*unit(20, "mm"), 
+              height = nrow(col_perc)*unit(20, "mm"),
+              cell_fun = function(j, i, x, y, width, height, fill) {
+                grid.text(sprintf("%.1f", row_perc[i, j]), x, y, gp = gpar(fontsize = sz*1.3, fontface = "bold"))
+              }) 
+    }
+  }
+  ## organize p-values and HRs from simulations in dataframe
+  pval_df <- data.frame(
+    "index"=1,
+    "Chimerism_Threshold" = Ct,
+    "pval"= summary(cox)[["coefficients"]][5], # because log-rank  "pval"= surv_pvalue(fit)$pval   NOT WORKING when using interval censoring
+    "HR_cox"= summary(cox)[["conf.int"]][1],
+    "HR_95lo"= summary(cox)[["conf.int"]][3],
+    "HR_95up"= summary(cox)[["conf.int"]][4],
+    "pval_adj" = summary(cox_adj)[["coefficients"]][1,5],
+    "HR_cox_adj" = summary(cox_adj)[["conf.int"]][1,1],
+    "HR_95lo_adj" = summary(cox_adj)[["conf.int"]][1,3],
+    "HR_95up_adj" = summary(cox_adj)[["conf.int"]][1,4]
+  )
+  if(exists("pval_dfe")){pval_dfe <- rbind(pval_dfe, pval_df)}else{pval_dfe <- pval_df}
+  print(pval_df)
+}
+
+{ ## fix some limits and ratios
+  ylm_p <- c(0.0001,1)
+  ylm_h <- c(0.01,100)
+  ra_p <- 2.25*(log10(max(pval_dfe$Chimerism_Threshold))-log10(min(pval_dfe$Chimerism_Threshold)))/
+    (log10(ylm_p[2])-log10(ylm_p[1]))
+  ra_h <- 2.25*(log10(max(pval_dfe$Chimerism_Threshold))-log10(min(pval_dfe$Chimerism_Threshold)))/
+    (log10(ylm_h[2])-log10(ylm_h[1]))
+}
+## fix dataframe: p-val are NA if 95%CI are Inf
+pval_dfe$pval <- ifelse(pval_dfe$HR_95up == Inf, NA, pval_dfe$pval)
+pval_dfe$pval_adj <- ifelse(pval_dfe$HR_95up_adj == Inf, NA, pval_dfe$pval_adj)
+
+## p-values
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=pval))+
+  geom_smooth(size=2, method = "gam")+
+  geom_line()+
+  scale_y_log10(name = "", # P-values (Cox)
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_log10(name = "", # chimerism threshold
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  geom_hline(yintercept = 0.05, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_p, ylim = ylm_p)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## Hazard ratios
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=HR_cox, ymin= HR_95lo, ymax= HR_95up, group= index))+
+  geom_ribbon(alpha=0.25)+
+  geom_line(size=1, color= "olivedrab4")+
+  scale_y_log10(name = "", #Hazard Ratios & 95% CI (Cox)
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000))+
+  scale_x_log10(name = "", # chimerism threshold
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  geom_hline(yintercept = 1, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_h, ylim = ylm_h)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## p-values adjusted
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=pval_adj))+
+  geom_smooth(size=2, method = "gam")+
+  geom_line()+
+  scale_y_log10(name = "", # P-values (Cox)
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_log10(name = "", # chimerism threshold
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  geom_hline(yintercept = 0.05, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_p, ylim = ylm_p)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## Hazard ratios adjusted
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=HR_cox_adj, ymin= HR_95lo_adj, ymax= HR_95up_adj, group= index))+
+  geom_ribbon(alpha=0.25)+
+  geom_line(size=1, color= "olivedrab4")+
+  scale_y_log10(name = "", #Hazard Ratios & 95% CI (Cox)
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000))+
+  scale_x_log10(name = "", # chimerism threshold
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  geom_hline(yintercept = 1, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_h, ylim = ylm_h)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+gc()
+```
+## 20- Looking at the Chimerism Slope (change between time t & t+1) and see if it makes sense
+
+```{r}
+
+
+i <- 1   # try 1 or 2 or 3 or 4 to select specimen type
+m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+dt <- 540 # max days post-tx to show
+chimdot <- chimhct
+# select your disease group(s)
+chimdot <- chimdot[which(chimdot$material...69 %in% m[[i]]
+                         & chimdot$avail_timep %in% c("multi_last", "multi") 
+                         & chimdot$dxgroup %in% c("MDS", "ANL", "ALL")
+),]
+
+# exponentiating back the log-slopes so that values represent chimerism fold-change per day
+chimdot$log_chim_slope <- 10^chimdot$log_chim_slope
+
+## dispersion of slopes
+#chimslop <- chimhct
+#chimslop <- chimslop[which(!is.na(chimslop$log_chim_slope)
+#                          ),]
+
+#ggplot(chimslop, aes_string(x= "material...69", y= "log_chim_slope"))+
+#        geom_jitter(position=position_jitter(0.2), alpha = 0.3, color= "red", size = 1.5)+
+#        #scale_y_log10(breaks= c(0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000),
+#        #              labels= c(0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000))+
+#        ylab("Chimerism Slope (change between time t & t+1)")+
+#        #scale_y_break(c(-0.005,-0.005), scales = 10)+
+#        #scale_y_break(c(0.005,0.005), scales = 1)+
+#        coord_fixed(ratio = 15, ylim = c(-0.2,0.2))+
+#        geom_violin(alpha=0)+
+#        theme_few()
+
+## Chimerism slope as a function of time post transplant
+p_sl1 <- ggplot(chimdot, aes(x= day_chim, y= log_chim_slope, color= factor(delrel))) +
+  geom_point(size = 2, alpha = 0.4) +
+  scale_x_continuous(name = "", breaks = scales::breaks_width(60), limits = c(0, dt))+
+  #geom_smooth(method=lm)+ 
+  scale_y_log10(name = "")+      # Slope of recipient chimerism between two consecutive timepoints
+  #stat_density_2d(alpha=0.3, aes(fill = ..level..), geom="polygon") +
+  labs(color = "will relapse")+
+  scale_color_manual(values = col_pal2.1,
+                     labels = c("no", "yes"))+
+  theme_few()+
+  theme(aspect.ratio=1,
+        legend.position = "top",
+        legend.title = element_text(size=10),
+        legend.background = element_blank())
+
+ggMarginal(p_sl1,
+           groupColour = TRUE,
+           groupFill = TRUE,
+           margins = "y"
+)
+
+```
+## 21- Survival: Chimerism slopes (changes from t to t+1) as a time-dependent covariate
+
+```{r}
+
+i <- 1   # try 1 or 2 or 3 or 4 to select specimen type
+m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+chimsurvds <- chimhct
+#removing samples that self-fulfill the prophecy
+chimsurvds <- within(chimsurvds, { 
+  a <- avail_timep == "multi" & proph == "multi_last_if_SFProph_remv"
+  b <- avail_timep == "multi" & proph == "single_if_SFProph_remv"
+  c <- avail_timep == "multi_last" & proph == "Self_Fullf_Proph"
+  d <- avail_timep == "single" & proph == "Self_Fullf_Proph"
+  avail_timep[a] <- "multi_last"
+  avail_timep[b] <- "single"
+  avail_timep[c] <- NA
+  avail_timep[d] <- NA
+})
+
+# select your disease group(s)
+chimsurvds <- chimsurvds[which(chimsurvds$material...69 %in% m[[i]]
+                               & chimsurvds$avail_timep %in% c("multi_last", "multi", "single") 
+                               & chimsurvds$dxgroup %in% c("MDS", "ANL", "ALL")
+),]
+
+# exponentiating back the log-slopes so that values represent chimerism fold-change per day
+chimsurvds$log_chim_slope <- 10^chimsurvds$log_chim_slope
+
+rm(pval_dfe)
+for (n in c(0.9 %o% 1.00196^(1:100))) {
+  {
+    Ct <- n
+    chimsurvds$Chim_td_slop0 <- NA
+    chimsurvds$Chim_td_slop0 <- ifelse(chimsurvds$log_chim_slope>Ct,
+                                       chimsurvds$Chim_td_slop0 <- 1,
+                                       chimsurvds$Chim_td_slop0 <- 0)
+    length(which(chimsurvds$Chim_td_slop0 == 0))
+    length(which(chimsurvds$Chim_td_slop0 == 1))
+    
+    #chimsurvds$relday <- ifelse(is.na(chimsurvds$relday), chimsurvds$daysur, chimsurvds$relday)
+    
+    fit <-   survfit(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td_slop0, data = chimsurvds, id = upn)
+    cox <-     coxph(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td_slop0, data = chimsurvds, id = upn)
+    cox_adj <- coxph(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td_slop0 +txtype +pro_gvhd_cat +dxgroup +Chim_MFC0 +status_int, data = chimsurvds, id = upn)
+    ## construct the survival plots and cox hazard ratios
+    ggsurvplot(fit, data = chimsurvds)
+    
+    p_survds <- ggsurvplot(
+      fit,
+      data = chimsurvds,
+      size = 1,                       # change line size
+      palette =
+        col_pal2,        # custom color palettes
+      #conf.int = TRUE,                  # Add confidence interval
+      #conf.int.style = "step",          # customize style of confidence intervals
+      #pval = TRUE,                      # Add p-value {UNSOLVED: Cannot compute pvalue when using interval censoring}
+      pval.coord = c(0, 0.985),
+      pval.size = 4,
+      risk.table = FALSE,                # Add risk table
+      risk.table.col = "strata",        # Risk table color by groups
+      legend.labs =
+        c(print(paste("fold change =<", Ct)), print(paste("fold change >", Ct))),            # Change legend labels
+      risk.table.height = 0.25,         # Useful to change when you have multiple groups
+      ggtheme = theme_few()+theme(aspect.ratio = 1),
+      censor.shape = "|",
+      censor.size = 3,
+      xlim = c(0,1825),                 # present narrower X axis, but not affect
+      xlab = "",      # days post-allo-HCT
+      ylim = c(0,1),
+      ylab= "",    #fraction relapse (cumulative)
+      break.time.by = 365,              # break X axis in time intervals by 'n'.
+      risk.table.y.text.col = T,        # color risk table text annotations.
+      risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+      #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+      #ncensor.plot.height = 0.25,
+      surv.median.line = "hv",          # add the median survival pointer.
+      tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+      fontsize = 3, 
+      legend.title="",
+      fun = "event" 
+    )
+    p_survds$plot <- p_survds$plot + 
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = Inf,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("HR=",
+                                   format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3.5
+      )+
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = 0.95,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("adj.HR=",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3.5
+      )
+    p_survds
+    length(unique(chimsurvds$upn))
+    length(unique(chimsurvds[!is.na(chimsurvds$Chim_td_slop0),]$upn))
+    tabl <- chimsurvds[!is.na(chimsurvds$Chim_td_slop0),]
+    table(tabl[!duplicated(tabl$upn),]$Chim_td_slop0)
+    summary(fit)$table[1,"n.max"]
+    summary(fit)$table[2,"n.max"]
+    summary(fit)$table
+  }
+  ## organize p-values and HRs from simulations in dataframe
+  pval_df <- data.frame(
+    "index"=1,
+    "Chimerism_Threshold" = Ct,
+    "pval"= summary(cox)[["coefficients"]][5], # because log-rank  "pval"= surv_pvalue(fit)$pval   NOT WORKING when using interval censoring
+    "HR_cox"= summary(cox)[["conf.int"]][1],
+    "HR_95lo"= summary(cox)[["conf.int"]][3],
+    "HR_95up"= summary(cox)[["conf.int"]][4],
+    "pval_adj" = summary(cox_adj)[["coefficients"]][1,5],
+    "HR_cox_adj" = summary(cox_adj)[["conf.int"]][1,1],
+    "HR_95lo_adj" = summary(cox_adj)[["conf.int"]][1,3],
+    "HR_95up_adj" = summary(cox_adj)[["conf.int"]][1,4],
+    "above_Ct" = length(which(chimsurvds$Chim_td_slop0 == 1)),
+    "at_or_below_Ct" = length(which(chimsurvds$Chim_td_slop0 == 0))
+  )
+  if(exists("pval_dfe")){pval_dfe <- rbind(pval_dfe, pval_df)}else{pval_dfe <- pval_df}
+  print(pval_df)
+}
+
+{ ## fix some limits and ratios
+  ylm_p <- c(0.0001,1)
+  ylm_h <- c(0.001,1000)
+  ra_p <- 2.25*(log10(max(pval_dfe$Chimerism_Threshold))-log10(min(pval_dfe$Chimerism_Threshold)))/
+    (log10(ylm_p[2])-log10(ylm_p[1]))
+  ra_h <- 2.25*(log10(max(pval_dfe$Chimerism_Threshold))-log10(min(pval_dfe$Chimerism_Threshold)))/
+    (log10(ylm_h[2])-log10(ylm_h[1]))
+  ra_f <- 1*(log10(max(pval_dfe$Chimerism_Threshold))-log10(min(pval_dfe$Chimerism_Threshold)))/1
+}
+## fix dataframe: p-val are NA if 95%CI are Inf
+pval_dfe$pval <- ifelse(pval_dfe$HR_95up == Inf, NA, pval_dfe$pval)
+pval_dfe$pval_adj <- ifelse(pval_dfe$HR_95up_adj == Inf, NA, pval_dfe$pval_adj)
+
+## p-values
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=pval))+
+  geom_smooth(size=2, method = "gam")+
+  geom_line()+
+  scale_y_log10(name = "", #P-values (Cox)
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1))+
+  #scale_x_log10(name = "Chimerism Threshold",
+  #              breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+  #              labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_log10(name = "")+ #chim slope threshold
+  geom_hline(yintercept = 0.05, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_p, ylim = ylm_p)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## Hazard ratios
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=HR_cox, ymin= HR_95lo, ymax= HR_95up, group= index))+
+  geom_ribbon(alpha=0.25)+
+  geom_line(size=1, color= "olivedrab4")+
+  scale_y_log10(name = "", #Hazard Ratios & 95% CI (Cox)
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000))+
+  #scale_x_log10(name = "Chimerism Threshold",
+  #              breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+  #              labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_log10(name = "")+ #chim slope threshold
+  geom_hline(yintercept = 1, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_h, ylim = ylm_h)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## p-values adjusted
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=pval_adj))+
+  geom_smooth(size=2, method = "gam")+
+  geom_line()+
+  scale_y_log10(name = "", #P-values (Cox)
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1))+
+  #scale_x_log10(name = "Chimerism Threshold",
+  #              breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+  #              labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_log10(name = "")+ #chim slope threshold
+  geom_hline(yintercept = 0.05, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_p, ylim = ylm_p)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## Hazard ratios adjusted
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=HR_cox_adj, ymin= HR_95lo_adj, ymax= HR_95up_adj, group= index))+
+  geom_ribbon(alpha=0.25)+
+  geom_line(size=1, color= "olivedrab4")+
+  scale_y_log10(name = "", #Hazard Ratios & 95% CI (Cox)
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000))+
+  #scale_x_log10(name = "Chimerism Threshold",
+  #              breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+  #              labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_log10(name = "")+ #chim slope threshold
+  geom_hline(yintercept = 1, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_h, ylim = ylm_h)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## Frequency plot of measurements reaching each of the cutoffs 
+{
+  wid <- (max(pval_dfe$Chimerism_Threshold)-min(pval_dfe$Chimerism_Threshold))/
+    length(pval_dfe$Chimerism_Threshold) +
+    0.01025*((max(pval_dfe$Chimerism_Threshold)-min(pval_dfe$Chimerism_Threshold))/
+               length(pval_dfe$Chimerism_Threshold))
+  pval_dfe %>% 
+    gather(type, count, above_Ct:at_or_below_Ct) %>%
+    ggplot(., aes(x= Chimerism_Threshold, y= count, fill= type)) +
+    geom_bar(stat = "identity", position = "fill", width = wid) +   # default position = "stack"
+    scale_fill_brewer(palette= "Accent", name = "frequency \nof slopes", labels = c("> cutoff", "≤ cutoff")) +
+    coord_fixed(ratio = ra_f)+
+    ylab("")+
+    scale_x_log10(name = "")+ #chim slope threshold
+    theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) # to remove legend, add legend.position = "none" to theme()
+  }
+
+RColorBrewer::display.brewer.all()
+
+summary(cox)
+summary(cox)[["conf.int"]][c(1,3,4)]
+#cox_fit <- survfit(cox)
+#ggsurvplot(cox_fit, data = chimsurv)
+
+#p_cox <- ggforest(cox) +theme(aspect.ratio = 0.2)
+
+gc()
+
+```
+## 22- Frequency plot of slope measurements reaching each of the cutoffs between 0.5 and 2
+
+```{r}
+
+i <- 1   # try 1 or 2 or 3 or 4 to select specimen type
+m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+chimsurvds <- chimhct
+#removing samples that self-fulfill the prophecy
+chimsurvds <- within(chimsurvds, { 
+  a <- avail_timep == "multi" & proph == "multi_last_if_SFProph_remv"
+  b <- avail_timep == "multi" & proph == "single_if_SFProph_remv"
+  c <- avail_timep == "multi_last" & proph == "Self_Fullf_Proph"
+  d <- avail_timep == "single" & proph == "Self_Fullf_Proph"
+  avail_timep[a] <- "multi_last"
+  avail_timep[b] <- "single"
+  avail_timep[c] <- NA
+  avail_timep[d] <- NA
+})
+
+# select your disease group(s)
+chimsurvds <- chimsurvds[which(chimsurvds$material...69 %in% m[[i]]
+                               & chimsurvds$avail_timep %in% c("multi_last", "multi", "single") 
+                               & chimsurvds$dxgroup %in% c("MDS", "ANL", "ALL")
+),]
+
+# exponentiating back the log-slopes so that values represent chimerism fold-change per day
+chimsurvds$log_chim_slope <- 10^chimsurvds$log_chim_slope
+
+rm(dffe)
+
+##set cutoff threshold: 
+#  for BMA,  stable in  c(0.946 %o% 1.00149^(1:100))
+#  for CD33, stable in  c(0.88 %o% 1.0019^(1:100))
+#  for CD3,  stable in  c(0.815 %o% 1.00305^(1:100))
+
+for (n in c(0.5 %o% 1.01398^(1:100))) {
+  {
+    Ct <- n
+    chimsurvds$Chim_td_slop0 <- NA
+    chimsurvds$Chim_td_slop0 <- ifelse(chimsurvds$log_chim_slope>Ct,
+                                       chimsurvds$Chim_td_slop0 <- 1,
+                                       chimsurvds$Chim_td_slop0 <- 0)
+    length(which(chimsurvds$Chim_td_slop0 == 0))
+    length(which(chimsurvds$Chim_td_slop0 == 1))
+  }
+  ## organize p-values and HRs in dataframe
+  dff <- data.frame(
+    "index"=1,
+    "Chimerism_Threshold" = Ct,
+    "above_Ct" = length(which(chimsurvds$Chim_td_slop0 == 1)),
+    "at_or_below_Ct" = length(which(chimsurvds$Chim_td_slop0 == 0))
+  )
+  if(exists("dffe")){dffe <- rbind(dffe, dff)}else{dffe <- dff}
+  print(dff)
+}
+{
+  # fix the ggplot ratio
+  ra_f <- 1*(log10(max(dffe$Chimerism_Threshold))-log10(min(dffe$Chimerism_Threshold)))/1
+  # draw the plot
+  wid <- (max(dffe$Chimerism_Threshold)-min(dffe$Chimerism_Threshold))/
+    length(dffe$Chimerism_Threshold) +
+    0.01025*((max(dffe$Chimerism_Threshold)-min(dffe$Chimerism_Threshold))/
+               length(dffe$Chimerism_Threshold))
+  dffe %>% 
+    gather(type, count, above_Ct:at_or_below_Ct) %>%
+    ggplot(., aes(x= Chimerism_Threshold, y= count, fill= type)) +
+    geom_bar(stat = "identity", position = "fill", width = wid) +   # default position = "stack"
+    scale_fill_brewer(palette= "Accent", name = "frequency \nof slopes", labels = c("> cutoff", "≤ cutoff")) +
+    coord_fixed(ratio = ra_f)+
+    ylab("")+
+    scale_x_log10(name = "")+ #chim slope threshold
+    theme_few() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+          legend.title = element_text(size=10),
+          legend.position = "right", # to remove legend --> legend.position = "none"
+          legend.background = element_blank()) 
+}
+
+```
+## 23- Chimerism dynamics per patient (per upn)
+
+```{r}
+
+#designate a slope where you'd like to call incr. chim above it "1" and slow or decr chim below it "0":
+s <- 0
+
+# fix the dataframe
+chimhct$chim_incr_fast <- NA
+chimsplit <- with(chimhct, split(chimhct, list(upn=upn, material...69=material...69)))
+for(j in 1:length(chimsplit)){
+  tryCatch({
+    chimsplit[[j]]$chim_incr_fast <- ifelse(any(with(chimsplit[[j]], chimsplit[[j]]$log_chim_slope_1e7 > s), na.rm = T),
+                                            chimsplit[[j]]$chim_incr_fast <- 1,
+                                            ifelse(any(with(chimsplit[[j]], chimsplit[[j]]$log_chim_slope_1e7 <= s), na.rm = T),
+                                                   chimsplit[[j]]$chim_incr_fast <- 0,
+                                                   chimsplit[[j]]$chim_incr_fast <- NA
+                                            )
+    )
+  }, error=function(e){cat("Empty sub-dataframe, skip to next:  ", conditionMessage(e), "\n")})
+}
+
+# testing a few dfs to see
+chimsplit[[1]]$chim_incr_fast
+chimsplit[[2]]$chim_incr_fast
+chimsplit[[3]]$chim_incr_fast
+chimsplit[[8]]$chim_incr_fast
+chimsplit[[12]]$chim_incr_fast
+chimsplit[[15]]$chim_incr_fast
+
+# recreate the dataframe
+chimsplit <- do.call("rbind", chimsplit)
+
+# [optional] visualize dataframe in excel
+write_xlsx(chimsplit, "test_df.xlsx", col_names=TRUE)
+
+# now, plot chimerism dynamics by grouping upns into incr or decr:
+
+i <- 1   # try 1 or 2 or 3 or 4 to select specimen type
+m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+dt <- 540 # max days post-tx to show
+
+chim_incr_fast<- subset(chimsplit, chim_incr_fast == 1
+                        & material...69 == m[[i]]
+                        & avail_timep != "post_rel"          #remove post relapse chim measurements as it defeats the purpose
+                        & avail_timep != "post_rel_window"   #remove post relapse window measurements i.e. first 540 days as it's too late and probably wont relapse
+                        & avail_timep != "multi_last_SFP"    #remove last chim measurement at the same time of relpase dx to avoid Self Fulfilling Prophecy
+)
+chim_incr_slow_decr<- subset(chimsplit, chim_incr_fast == 0
+                             & material...69 == m[[i]]
+                             & avail_timep != "post_rel"
+                             & avail_timep != "post_rel_window"
+                             & avail_timep != "multi_last_SFP"
+)
+chim_dyn <- list(chim_incr_fast, chim_incr_slow_decr)
+
+l<- 1      #try 1 (for incr fast) or 2 (for incr. slow or decr)
+ggplot(chim_dyn[[l]], aes(x= day_chim, y= Pr_Chim_0, group= upn, color= upn)) +
+  geom_line() +
+  geom_point(size = 2, alpha = 0.2) +
+  #annotation_logticks() +
+  geom_errorbar(aes(ymin = Lo_95_CI_0,ymax = Up_95_CI_0), width=10, position=position_dodge(0.05), alpha = 0.5, linetype = "dashed")+
+  scale_y_log10(name = "proportion recipient",
+                breaks = c(0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels = c("Not-Det", c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1))) +
+  scale_x_continuous(name = "days post-HCT", breaks = scales::breaks_width(60))+
+  coord_fixed(ratio=(dt/7), ylim= c(0.0000001, 1), xlim = c(0, dt)) + 
+  theme_few() + theme(legend.position="none") 
+
+length(unique(chim_dyn[[l]]$upn))
+gc()
+
+
+```
+## 24- Survival: Chimerism slopes (changes from t to t+1) as a time-dependent covariate
+##     Repeated (1000x) Random Down-Sampling (80% of original set) on a selected slope 
+
+```{r}
+## if running a new for-loop, remove old results dataframe
+rm(pval_dfs)
+
+#designate a slope where you'd like to call incr. chim above it "1" and slow or decr chim below it "0":
+s <- 1.042
+
+## run 1000 downsampling simulations
+for (n in 1:1000) {
+  i <- 1   # try 1 or 2 or 3 or 4 to select specimen type
+  m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+  chimsurvds <- chimhct
+  #removing samples that self-fulfill the prophecy
+  chimsurvds <- within(chimsurvds, { 
+    a <- avail_timep == "multi" & proph == "multi_last_if_SFProph_remv"
+    b <- avail_timep == "multi" & proph == "single_if_SFProph_remv"
+    c <- avail_timep == "multi_last" & proph == "Self_Fullf_Proph"
+    d <- avail_timep == "single" & proph == "Self_Fullf_Proph"
+    avail_timep[a] <- "multi_last"
+    avail_timep[b] <- "single"
+    avail_timep[c] <- NA
+    avail_timep[d] <- NA
+  })
+  # select your disease group(s)
+  chimsurvds <- chimsurvds[which(chimsurvds$material...69 %in% m[[i]]
+                                 & chimsurvds$avail_timep %in% c("multi_last", "multi", "single") 
+                                 & chimsurvds$dxgroup %in% c("MDS", "ANL", "ALL")
+  ),]
+  # exponentiating back the log-slopes so that values represent chimerism fold-change per day
+  chimsurvds$log_chim_slope <- 10^chimsurvds$log_chim_slope
+  ## Downsampling the dataframe
+  df1 <- subset(chimsurvds, delrel ==0)[sample(nrow(subset(chimsurvds, delrel ==0)), ceiling(0.8*nrow(subset(chimsurvds, delrel ==0)))),] 
+  df2 <- subset(chimsurvds, delrel ==1)[sample(nrow(subset(chimsurvds, delrel ==1)), ceiling(0.8*nrow(subset(chimsurvds, delrel ==1)))),]
+  chimsurvds <- rbind(df1, df2)
+  rm(df1, df2) 
+  
+  {
+    Ct <- s
+    chimsurvds$Chim_td_slop0 <- NA
+    chimsurvds$Chim_td_slop0 <- ifelse(chimsurvds$log_chim_slope>Ct,
+                                       chimsurvds$Chim_td_slop0 <- 1,
+                                       chimsurvds$Chim_td_slop0 <- 0)
+    
+    #chimsurvds$relday <- ifelse(is.na(chimsurvds$relday), chimsurvds$daysur, chimsurvds$relday)
+    
+    fit <-   survfit(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td_slop0, data = chimsurvds, id = upn)
+    cox <-     coxph(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td_slop0, data = chimsurvds, id = upn)
+    cox_adj <- coxph(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td_slop0 +txtype +pro_gvhd_cat +dxgroup +Chim_MFC0 +status_int, data = chimsurvds, id = upn)
+    ## construct the survival plots and cox hazard ratios
+    ggsurvplot(fit, data = chimsurvds)
+    
+    p_survds <- ggsurvplot(
+      fit,
+      data = chimsurvds,
+      size = 1,                       # change line size
+      palette =
+        col_pal2,        # custom color palettes
+      #conf.int = TRUE,                  # Add confidence interval
+      #conf.int.style = "step",          # customize style of confidence intervals
+      #pval = TRUE,                      # Add p-value {UNSOLVED: Cannot compute pvalue when using interval censoring}
+      pval.coord = c(0, 0.985),
+      pval.size = 4,
+      risk.table = TRUE,                # Add risk table
+      risk.table.col = "strata",        # Risk table color by groups
+      legend.labs =
+        c(print(paste("Chim. Slope =<", Ct)), print(paste("Chim. Slope >", Ct))),            # Change legend labels
+      risk.table.height = 0.25,         # Useful to change when you have multiple groups
+      ggtheme = theme_few()+theme(aspect.ratio = 1),
+      censor.shape = "|",
+      censor.size = 3,
+      xlim = c(0,1825),                 # present narrower X axis, but not affect
+      xlab = "days post-allo-HCT",      # customize X axis label.
+      ylim = c(0,1),
+      ylab= "fraction relapse (cumulative)",
+      break.time.by = 365,              # break X axis in time intervals by 'n'.
+      risk.table.y.text.col = T,        # color risk table text annotations.
+      risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+      #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+      #ncensor.plot.height = 0.25,
+      surv.median.line = "hv",          # add the median survival pointer.
+      tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+      fontsize = 3, 
+      legend.title="",
+      fun = "event" 
+    )
+    p_survds$plot <- p_survds$plot + 
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = Inf,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("HR=",
+                                   format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3.5
+      )+
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = 0.95,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("adj.HR=",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3.5
+      )
+    p_survds
+    length(unique(chimsurvds$upn))
+  }
+  ## organize p-values and HRs from simulations in dataframe
+  pval_df <- data.frame(
+    "index"=1,
+    "pval"= summary(cox)[["coefficients"]][5], # because log-rank  "pval"= surv_pvalue(fit)$pval   NOT WORKING when using interval censoring
+    "HR_cox"= summary(cox)[["conf.int"]][1],
+    "HR_95lo"= summary(cox)[["conf.int"]][3],
+    "HR_95up"= summary(cox)[["conf.int"]][4],
+    "pval_adj" = summary(cox_adj)[["coefficients"]][1,5],
+    "HR_cox_adj" = summary(cox_adj)[["conf.int"]][1,1],
+    "HR_95lo_adj" = summary(cox_adj)[["conf.int"]][1,3],
+    "HR_95up_adj" = summary(cox_adj)[["conf.int"]][1,4]
+  )
+  if(exists("pval_dfs")){pval_dfs <- rbind(pval_dfs, pval_df)}else{pval_dfs <- pval_df}
+  print(pval_df)
+}
+pval_dfs <- pval_dfs[1:1000,]
+
+{ ## fix some limits and ratios
+  ylm_p <- c(0.0001,1)
+  ylm_h <- c(0.001,1000)
+  ra_p <- 1*(1000-1)/
+    (log10(ylm_p[2])-log10(ylm_p[1]))
+  ra_h <- 1*(1000-1)/
+    (log10(ylm_h[2])-log10(ylm_h[1]))
+}
+
+## reoder result df for plotting
+pval_dfs <- pval_dfs[order(pval_dfs$pval),]
+row.names(pval_dfs)<- NULL
+
+## p-values
+ggplot(pval_dfs, aes(x= as.numeric(row.names(pval_dfs)), y=pval, group= index))+
+  geom_smooth(size=2, method = "gam")+
+  geom_line()+
+  scale_y_log10(name = "P-values (cox)",
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_continuous(name = "rank (down-sampling simulations)")+
+  geom_hline(yintercept = 0.05, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_p, ylim = ylm_p)+
+  theme_few() 
+
+## Hazard ratios
+ggplot(pval_dfs, aes(x= as.numeric(row.names(pval_dfs)), y=HR_cox, ymin= HR_95lo, ymax= HR_95up, group= index))+
+  geom_ribbon(alpha=0.25)+
+  geom_line(size=0.5, color= "olivedrab4")+
+  scale_y_log10(name = "Hazard Ratios & 95% CI (Cox)",
+                breaks= c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000),
+                labels= c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000))+
+  scale_x_continuous(name = "rank (down-sampling simulations)")+
+  geom_hline(yintercept = 1, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_h, ylim = ylm_h)+
+  theme_few() 
+
+## reoder result df for plotting for the adjusted model
+pval_dfs <- pval_dfs[order(pval_dfs$pval_adj),]
+row.names(pval_dfs)<- NULL
+
+## p-values adjusted
+ggplot(pval_dfs, aes(x= as.numeric(row.names(pval_dfs)), y=pval_adj, group= index))+
+  geom_smooth(size=2, method = "gam")+
+  geom_line()+
+  scale_y_log10(name = "P-values (cox)",
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_continuous(name = "rank (down-sampling simulations)")+
+  geom_hline(yintercept = 0.05, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_p, ylim = ylm_p)+
+  theme_few() 
+
+## Hazard ratios adjusted
+ggplot(pval_dfs, aes(x= as.numeric(row.names(pval_dfs)), y=HR_cox_adj, ymin= HR_95lo_adj, ymax= HR_95up_adj, group= index))+
+  geom_ribbon(alpha=0.25)+
+  geom_line(size=0.5, color= "olivedrab4")+
+  scale_y_log10(name = "Hazard Ratios & 95% CI (Cox)",
+                breaks= c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000),
+                labels= c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000))+
+  scale_x_continuous(name = "rank (down-sampling simulations)")+
+  geom_hline(yintercept = 1, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_h, ylim = ylm_h)+
+  theme_few() 
+
+gc()
+```
+## 25- Survival: Chimerism Absolute Values as a time-dependent covariate
+##     Repeated (1000x) Random Down-Sampling (80% of original set) on a selected threshold 
+
+```{r}
+## if running a new for-loop, remove old results dataframe
+rm(pval_dfs)
+
+#designate a threshold where you'd like to call high-level chim above it "1" and low-level chim below it "0":
+s <- 0.02
+
+## run 1000 downsampling simulations
+for (n in 1:1000) {
+  i <- 2   # try 1 or 2 or 3 or 4 to select specimen type
+  m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+  chimsurvds <- chimhct
+  #removing samples that self-fulfill the prophecy
+  chimsurvds <- within(chimsurvds, { 
+    a <- avail_timep == "multi" & proph == "multi_last_if_SFProph_remv"
+    b <- avail_timep == "multi" & proph == "single_if_SFProph_remv"
+    c <- avail_timep == "multi_last" & proph == "Self_Fullf_Proph"
+    d <- avail_timep == "single" & proph == "Self_Fullf_Proph"
+    avail_timep[a] <- "multi_last"
+    avail_timep[b] <- "single"
+    avail_timep[c] <- NA
+    avail_timep[d] <- NA
+  })
+  # select your disease group(s)
+  chimsurvds <- chimsurvds[which(chimsurvds$material...69 %in% m[[i]]
+                                 & chimsurvds$avail_timep %in% c("multi_last", "multi", "single") 
+                                 & chimsurvds$dxgroup %in% c("MDS", "ANL", "ALL")
+  ),]
+  ## Downsampling the dataframe
+  df1 <- subset(chimsurvds, delrel ==0)[sample(nrow(subset(chimsurvds, delrel ==0)), ceiling(0.8*nrow(subset(chimsurvds, delrel ==0)))),] 
+  df2 <- subset(chimsurvds, delrel ==1)[sample(nrow(subset(chimsurvds, delrel ==1)), ceiling(0.8*nrow(subset(chimsurvds, delrel ==1)))),]
+  chimsurvds <- rbind(df1, df2)
+  rm(df1, df2) 
+  
+  {
+    Ct <- s
+    chimsurvds$Chim_td0 <- NA
+    chimsurvds$Chim_td0 <- ifelse(chimsurvds$Pr_Chim_0>Ct,
+                                  chimsurvds$Chim_td0 <- 1,
+                                  chimsurvds$Chim_td0 <- 0)
+    
+    #chimsurvds$relday <- ifelse(is.na(chimsurvds$relday), chimsurvds$daysur, chimsurvds$relday)
+    
+    fit <-   survfit(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td0, data = chimsurvds, id = upn)
+    cox <-     coxph(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td0, data = chimsurvds, id = upn) #should be same as above!!
+    cox_adj <- coxph(Surv(day_chim, relday_td2, delrel_td) ~ Chim_td0 +txtype +pro_gvhd_cat +dxgroup +Chim_MFC0 +status_int, data = chimsurvds, id = upn)
+    ## construct the survival plots and cox hazard ratios
+    ggsurvplot(fit, data = chimsurvds)
+    
+    p_survds <- ggsurvplot(
+      fit,
+      data = chimsurvds,
+      size = 1,                       # change line size
+      palette =
+        col_pal2,        # custom color palettes
+      #conf.int = TRUE,                  # Add confidence interval
+      #conf.int.style = "step",          # customize style of confidence intervals
+      #pval = TRUE,                      # Add p-value {UNSOLVED: Cannot compute pvalue when using interval censoring}
+      #pval.coord = c(0, 0.985),
+      #pval.size = 4,
+      risk.table = TRUE,                # Add risk table
+      risk.table.col = "strata",        # Risk table color by groups
+      legend.labs =
+        c(print(paste("Chim =<", Ct)), print(paste("Chim >", Ct))),            # Change legend labels
+      risk.table.height = 0.25,         # Useful to change when you have multiple groups
+      ggtheme = theme_few()+theme(aspect.ratio = 1),
+      censor.shape = "|",
+      censor.size = 3,
+      xlim = c(0,1825),                 # present narrower X axis, but not affect
+      xlab = "days post-allo-HCT",      # customize X axis label.
+      ylim = c(0,1),
+      ylab= "fraction relapse (cumulative)",
+      break.time.by = 365,              # break X axis in time intervals by 'n'.
+      risk.table.y.text.col = T,        # color risk table text annotations.
+      risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+      #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+      #ncensor.plot.height = 0.25,
+      surv.median.line = "hv",          # add the median survival pointer.
+      tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+      fontsize = 3, 
+      legend.title="",
+      fun = "event" 
+    )
+    p_survds$plot <- p_survds$plot + 
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = Inf,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("HR=",
+                                   format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3.5
+      )+
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = 0.95,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("adj.HR=",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3.5
+      )
+    p_survds
+    length(unique(chimsurvds$upn))
+  }
+  ## organize p-values and HRs from simulations in dataframe
+  pval_df <- data.frame(
+    "index"=1,
+    "Chimerism_Threshold" = Ct,
+    "pval"= summary(cox)[["coefficients"]][5], # because log-rank  "pval"= surv_pvalue(fit)$pval   NOT WORKING when using interval censoring
+    "HR_cox"= summary(cox)[["conf.int"]][1],
+    "HR_95lo"= summary(cox)[["conf.int"]][3],
+    "HR_95up"= summary(cox)[["conf.int"]][4],
+    "pval_adj" = summary(cox_adj)[["coefficients"]][1,5],
+    "HR_cox_adj" = summary(cox_adj)[["conf.int"]][1,1],
+    "HR_95lo_adj" = summary(cox_adj)[["conf.int"]][1,3],
+    "HR_95up_adj" = summary(cox_adj)[["conf.int"]][1,4]
+  )
+  if(exists("pval_dfs")){pval_dfs <- rbind(pval_dfs, pval_df)}else{pval_dfs <- pval_df}
+  print(pval_df)
+}
+pval_dfs <- pval_dfs[1:1000,]
+
+{ ## fix some limits and ratios
+  ylm_p <- c(0.0001,1)
+  ylm_h <- c(0.001,1000)
+  ra_p <- 1*(1000-1)/
+    (log10(ylm_p[2])-log10(ylm_p[1]))
+  ra_h <- 1*(1000-1)/
+    (log10(ylm_h[2])-log10(ylm_h[1]))
+}
+
+## reoder result df for plotting
+pval_dfs <- pval_dfs[order(pval_dfs$pval),]
+row.names(pval_dfs)<- NULL
+
+## p-values
+ggplot(pval_dfs, aes(x= as.numeric(row.names(pval_dfs)), y=pval, group= index))+
+  geom_smooth(size=2, method = "gam")+
+  geom_line()+
+  scale_y_log10(name = "P-values (cox)",
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_continuous(name = "rank (down-sampling simulations)")+
+  geom_hline(yintercept = 0.05, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_p, ylim = ylm_p)+
+  theme_few() 
+
+## Hazard ratios
+ggplot(pval_dfs, aes(x= as.numeric(row.names(pval_dfs)), y=HR_cox, ymin= HR_95lo, ymax= HR_95up, group= index))+
+  geom_ribbon(alpha=0.25)+
+  geom_line(size=0.5, color= "olivedrab4")+
+  scale_y_log10(name = "Hazard Ratios & 95% CI (Cox)",
+                breaks= c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000),
+                labels= c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000))+
+  scale_x_continuous(name = "rank (down-sampling simulations)")+
+  geom_hline(yintercept = 1, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_h, ylim = ylm_h)+
+  theme_few() 
+
+## reoder result df for plotting for the adjusted model
+pval_dfs <- pval_dfs[order(pval_dfs$pval_adj),]
+row.names(pval_dfs)<- NULL
+
+## p-values adjusted
+ggplot(pval_dfs, aes(x= as.numeric(row.names(pval_dfs)), y=pval_adj, group= index))+
+  geom_smooth(size=2, method = "gam")+
+  geom_line()+
+  scale_y_log10(name = "P-values (cox)",
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_continuous(name = "rank (down-sampling simulations)")+
+  geom_hline(yintercept = 0.05, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_p, ylim = ylm_p)+
+  theme_few() 
+
+## Hazard ratios adjusted
+ggplot(pval_dfs, aes(x= as.numeric(row.names(pval_dfs)), y=HR_cox_adj, ymin= HR_95lo_adj, ymax= HR_95up_adj, group= index))+
+  geom_ribbon(alpha=0.25)+
+  geom_line(size=0.5, color= "olivedrab4")+
+  scale_y_log10(name = "Hazard Ratios & 95% CI (Cox)",
+                breaks= c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000),
+                labels= c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000))+
+  scale_x_continuous(name = "rank (down-sampling simulations)")+
+  geom_hline(yintercept = 1, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_h, ylim = ylm_h)+
+  theme_few() 
+
+gc()
+```
+## 26- MFC post-tx survival as a time-dependent covariate (any >0 is positive)
+
+```{r}
+
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33" "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"        "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"               "ALL"
+
+i <- 1   # must remain i=1 as MFC is detected in BMA only
+#m <- c("BMA", "PB_CD33", "PB_CD3") #material is based on "mrd_posttx_select" col and is always BMA
+dt <- 540 # max days post-tx to show
+chimsurv <- chimmrd
+chimsurv$Pr_MRD_0 <- NA
+chimsurv$Pr_MRD_0 <- ifelse(chimsurv$Pr_MRD_MFC==0,
+                            chimsurv$Pr_MRD_0 <- 1e-7,
+                            chimsurv$Pr_MRD_0 <- chimsurv$Pr_MRD_MFC)
+
+{
+  Ct <- 1e-5
+  chimsurv$mrd_td0 <- NA
+  chimsurv$mrd_td0 <- ifelse(chimsurv$Pr_MRD_0 < Ct,
+                             chimsurv$mrd_td0 <- 0,
+                             chimsurv$mrd_td0 <- 1)
+  
+  #chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+  
+  fit <-   survfit(Surv(day_chim, relday_td2_mrd, delrel_td_mrd) ~ mrd_td0, data = chimsurv, id = upn)
+  cox <-     coxph(Surv(day_chim, relday_td2_mrd, delrel_td_mrd) ~ mrd_td0, data = chimsurv, id = upn) #should be same as above!!
+  cox_adj <- coxph(Surv(day_chim, relday_td2_mrd, delrel_td_mrd) ~ mrd_td0 +txtype +pro_gvhd_cat +dxgroup +Chim_MFC0 +status_int, data = chimsurv, id = upn)
+  ## construct the survival plots and cox hazard ratios
+  ggsurvplot(fit, data = chimsurv)
+  
+  p_survds <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      col_pal2,        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value {UNSOLVED: Cannot compute pvalue when using interval censoring}
+    pval.coord = c(0, 0.985),
+    pval.size = 4,
+    risk.table = FALSE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("MRD (by MFC)-neg", "MRD (by MFC)-pos"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_survds$plot <- p_survds$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR=",
+                                 format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.95,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("adj.HR=",
+                                 format(round(summary(cox_adj)[["conf.int"]][1,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox_adj)[["conf.int"]][1,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox_adj)[["conf.int"]][1,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )
+}
+p_survds
+
+summary(fit)$table[1,"n.max"]
+summary(fit)$table[2,"n.max"]
+summary(fit)$table
+
+length(unique(chimsurv$upn))
+length(unique(chimHCT$upn))
+chimtest <- chimHCT[which(chimHCT$material...19 %in% c("Bone Marrow", "Whole BM Donor 1", "Whole BM Donor 2", "Whole BM Donor 3")),]
+length(unique(chimtest$upn))
+chimtest <- chimHCT[which(chimHCT$material...19 %in% c("Bone Marrow", "Whole BM Donor 1", "Whole BM Donor 2", "Whole BM Donor 3") 
+                          & chimHCT$'MRD note' %in% c("yes", NA)),]
+length(unique(chimtest$upn))
+
+## Plotting MRD by MFC as a function of time post transplant
+p_sl1 <- ggplot(chimsurv, aes(x= day_chim, y= Pr_MRD_0, color= factor(delrel))) +
+  geom_point(size = 2, alpha = 0.4) +
+  scale_x_continuous(name = "", breaks = scales::breaks_width(60), limits = c(0, dt))+
+  #geom_smooth(method=lm)+ 
+  scale_y_log10(name = "", #proportion MRD by MFC
+                breaks = c(0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels = c("Not-Det", c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1))) +
+  #stat_density_2d(alpha=0.3, aes(fill = ..level..), geom="polygon") +
+  labs(color = "will relapse")+
+  scale_color_manual(values = col_pal2.1,
+                     labels = c("no", "yes"))+
+  coord_fixed(ratio = (dt/7), ylim = c(0.0000001, 1))+
+  theme_few()+
+  theme(legend.position = "top",
+        legend.title = element_text(size=10),
+        legend.background = element_blank())
+
+ggMarginal(p_sl1,
+           groupColour = TRUE,
+           groupFill = TRUE,
+           margins = "y"
+)
+
+```
+## 27- MFC dynamics post-tx survival as a time-dependent covariate (1 if became or remained positive and 0 if became or remained negative)
+
+```{r}
+unique(chimhct$material...69) # "PB_CD3"     "PB_CD33" "BMA"     "PB_CD19"
+unique(chimhct$avail_timep)   # "multi"      "multi_last"        "single"  
+unique(chimhct$dxgroup)       # "MDS"        "ANL"               "ALL"
+
+i <- 1   # must remain i=1 as MFC is detected in BMA only
+#m <- c("BMA", "PB_CD33", "PB_CD3") #material is based on "mrd_posttx_select" col and is always BMA
+dt <- 540 # max days post-tx to show
+chimsurv <- chimmrd
+
+{
+  
+  fit <-   survfit(Surv(day_chim, relday_td2_mrd, delrel_td_mrd) ~ mrd_posttx_inc1_dec0, data = chimsurv, id = upn)
+  cox <-     coxph(Surv(day_chim, relday_td2_mrd, delrel_td_mrd) ~ mrd_posttx_inc1_dec0, data = chimsurv, id = upn) #should be same as above!!
+  cox_adj <- coxph(Surv(day_chim, relday_td2_mrd, delrel_td_mrd) ~ mrd_posttx_inc1_dec0 +txtype +pro_gvhd_cat +dxgroup +Chim_MFC0 +status_int, data = chimsurv, id = upn)
+  ## construct the survival plots and cox hazard ratios
+  ggsurvplot(fit, data = chimsurv)
+  
+  p_survds <- ggsurvplot(
+    fit,
+    data = chimsurv,
+    size = 1,                       # change line size
+    palette =
+      col_pal2,        # custom color palettes
+    #conf.int = TRUE,                  # Add confidence interval
+    #conf.int.style = "step",          # customize style of confidence intervals
+    #pval = TRUE,                      # Add p-value {UNSOLVED: Cannot compute pvalue when using interval censoring}
+    pval.coord = c(0, 0.985),
+    pval.size = 4,
+    risk.table = FALSE,                # Add risk table
+    risk.table.col = "strata",        # Risk table color by groups
+    legend.labs =
+      c("MRD becomes \nor remains neg", "MRD becomes \nor remains pos"),            # Change legend labels
+    risk.table.height = 0.25,         # Useful to change when you have multiple groups
+    ggtheme = theme_few()+theme(aspect.ratio = 1),
+    censor.shape = "|",
+    censor.size = 3,
+    xlim = c(0,1825),                 # present narrower X axis, but not affect
+    xlab = "days post-allo-HCT",      # customize X axis label.
+    ylim = c(0,1),
+    ylab= "fraction relapse (cumulative)",
+    break.time.by = 365,              # break X axis in time intervals by 'n'.
+    risk.table.y.text.col = T,        # color risk table text annotations.
+    risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+    #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+    #ncensor.plot.height = 0.25,
+    surv.median.line = "hv",          # add the median survival pointer.
+    tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+    fontsize = 3, 
+    legend.title="",
+    fun = "event" 
+  )
+  p_survds$plot <- p_survds$plot + 
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = Inf,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("HR=",
+                                 format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )+
+    ggplot2::annotate(
+      "text",
+      x = Inf, y = 0.95,
+      vjust = 2, hjust = 1,
+      label = capture.output(cat("adj.HR=",
+                                 format(round(summary(cox_adj)[["conf.int"]][1,1], 1), nsmall = 1),
+                                 " [",
+                                 format(round(summary(cox_adj)[["conf.int"]][1,3], 1), nsmall = 1),
+                                 " to ",
+                                 format(round(summary(cox_adj)[["conf.int"]][1,4], 1), nsmall = 1),
+                                 "] ")),
+      size = 3.5
+    )
+}
+p_survds
+length(unique(chimsurv$upn))
+summary(fit)$table[1,"n.max"]
+summary(fit)$table[2,"n.max"]
+summary(fit)$table
+
+## Plotting MRD change as a function of time post transplant
+p_sl1 <- ggplot(chimsurv, aes(x= day_chim, y= mrd_posttx_inc1_dec0, color= factor(delrel))) +
+  geom_point(size = 2, alpha = 0.4) +
+  scale_x_continuous(name = "", breaks = scales::breaks_width(60), limits = c(0, dt))+
+  #geom_smooth(method=lm)+ 
+  scale_y_continuous(name = "", #proportion MRD by MFC
+                     breaks = c(0, 1),
+                     labels = c("MRD becomes \nor remains neg", "MRD becomes \nor remains pos")) +
+  #stat_density_2d(alpha=0.3, aes(fill = ..level..), geom="polygon") +
+  labs(color = "will relapse")+
+  scale_color_manual(values = col_pal2.1,
+                     labels = c("no", "yes"))+
+  coord_fixed(ratio = dt, ylim = c(0.0000001, 1))+
+  theme_few()+
+  theme(legend.position = "top",
+        legend.title = element_text(size=10),
+        legend.background = element_blank())
+
+ggMarginal(p_sl1,
+           groupColour = TRUE,
+           groupFill = TRUE,
+           margins = "y"
+)
+
+```
+## 28- MFC post-tx vs. Chimerocyte
+
+```{r}
+i <- 1   # try 1 or 2 or 3 or 4
+m <- c("BMA", "PB_CD33", "PB_CD3", "PB_CD19")
+
+chimsurv <- chimhct[which(chimhct$material...69 %in% m[[i]]
+                          & chimhct$avail_timep %in% c("multi_last", "multi", "single")
+                          & chimhct$dxgroup %in% c("ALL", "ANL", "MDS")
+),]
+chimsurv$Pr_MRD_0 <- NA
+chimsurv$Pr_MRD_0 <- ifelse(chimsurv$Pr_MRD_MFC==0,
+                            chimsurv$Pr_MRD_0 <- 1e-7,
+                            chimsurv$Pr_MRD_0 <- chimsurv$Pr_MRD_MFC)
+
+#correlation between MFC vs Chimerocyte
+corr <- cor.test(subset(chimsurv, material...69 ==m[[i]])$Pr_Chim_0, subset(chimsurv, material...69 ==m[[i]])$Pr_MRD_MFC, method = "spearman")
+p_sl1<- ggplot(subset(chimsurv, material...69 ==m[[i]]), aes(y= Pr_MRD_0, x= Pr_Chim_0)) +
+  geom_point(size = 2, alpha = 0.15, color = "red") +
+  geom_abline(linetype = "dashed", color = "blue", size = 0.5, alpha = 1) +
+  #annotation_logticks() +
+  geom_errorbar(aes(xmin = Lo_95_CI_0,xmax = Up_95_CI_0), color = "red", width = 0.1, alpha = 0.5)+
+  scale_x_log10(name = "", #proportion MRD by MFC
+                breaks = c(0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels = c("Not-Det", c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1))) +
+  scale_y_log10(name = "", #proportion recipient (Chimerocyte)
+                breaks = c(0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels = c("Not-Det", c(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1))) +
+  coord_fixed(ratio = 1, xlim = c(0.0000001,1), ylim = c(0.0000001,1)) + 
+  #stat_density_2d(alpha=0.3, aes(fill = ..level..), geom="polygon") +
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  annotate(geom="text", 
+           x=1e-5, y=1, 
+           label=capture.output(cat("spearman r =",
+                                    format(round(corr$estimate, 3), nsmall = 1))),
+           size = 3.25)+
+  annotate(geom="text", 
+           x=1e-5, y=0.3, 
+           label=capture.output(cat("p =",
+                                    formatC(corr$p.value, format = "e", digits = 1))),
+           size = 3.25)
+
+ggMarginal(p_sl1,
+           groupColour = F,
+           groupFill = F,
+           margins = "both",
+           type = "density",
+           size = 5,
+           xparams = list(binwidth = .1, fill = "red", col = "red", alpha = 0.15),
+           yparams = list(binwidth = .1, fill = "red", col = "red", alpha = 0.15)
+)
+
+# exponentiating back the log-slopes so that values represent chimerism fold-change per day
+chimsurv$log_chim_slope <- 10^chimsurv$log_chim_slope   # DO THIS JUST ONCE!
+
+# correlation between MRD change and Chim dynamics
+corr <- cor.test(subset(chimsurv, material...69 ==m[[i]])$log_chim_slope, subset(chimsurv, material...69 ==m[[i]])$mrd_posttx_inc1_dec0, method = "spearman")
+p_sl1<- ggplot(subset(chimsurv, material...69 ==m[[i]]), aes(y= mrd_posttx_inc1_dec0, x= log_chim_slope)) +
+  geom_point(size = 2, alpha = 0.15, color = "red") +
+  scale_x_log10(name = "")+      # Slope of recipient chimerism between two consecutive timepoints
+  scale_y_continuous(name = "", #proportion MRD by MFC
+                     breaks = c(0, 1),
+                     labels = c("MRD becomes \nor remains neg", "MRD becomes \nor remains pos")) +
+  theme_few() + theme(aspect.ratio=1, axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  annotate(geom="text", 
+           x=1.1, y=1, 
+           label=capture.output(cat("spearman r =",
+                                    format(round(corr$estimate, 3), nsmall = 1))),
+           size = 3.25)+
+  annotate(geom="text", 
+           x=1.1, y=0.95, 
+           label=capture.output(cat("p =",
+                                    formatC(corr$p.value, format = "e", digits = 1))),
+           size = 3.25)
+
+ggMarginal(p_sl1,
+           groupColour = F,
+           groupFill = F,
+           margins = "both",
+           type = "density",
+           size = 5,
+           xparams = list(binwidth = .1, fill = "red", col = "red", alpha = 0.15),
+           yparams = list(binwidth = .1, fill = "red", col = "red", alpha = 0.15)
+)
+
+```
+## 29- survival: MFC and Chim post-tx as combined time-dependent covariates
+
+```{r}
+
+i <- 1   # must remain i=1 as MFC is detected in BMA only, also the model breaks if chosing other tissues
+m <- c("BMA", "PB_CD33", "PB_CD3") 
+dt <- 540 # max days post-tx to show
+chimsurv <- chimhct
+
+# select your disease group(s)
+chimsurv <- chimsurv[which(chimsurv$material...69 %in% m[[i]]
+                           & chimsurv$avail_timep %in% c("multi_last", "multi", "single") 
+                           & chimsurv$dxgroup %in% c("MDS", "ANL", "ALL")
+),]
+
+# some stats
+length(unique(chimsurv$upn))
+table(is.na(chimsurv$Pr_Chim))
+table(is.na(chimsurv$Pr_MRD_MFC))
+length(unique(subset(chimsurv, !is.na(Pr_MRD_MFC))$upn))
+length(subset(chimsurv, !is.na(Pr_MRD_MFC))$upn)
+
+rm(pval_dfe)
+for (n in c(0.00001 %o% 1.114268107^(1:100))) {   #1.106571295
+  #set cutoff threshold
+  {
+    Ct <-  n #0.005
+    chimsurv$mrd_td0 <- NA
+    chimsurv$mrd_td0 <- ifelse(chimsurv$Pr_MRD_MFC > 0 & chimsurv$Pr_Chim >= Ct,
+                               chimsurv$mrd_td0 <- "MRD_Chim_pos", 
+                               ifelse(chimsurv$Pr_MRD_MFC == 0 & chimsurv$Pr_Chim >= Ct, "one_is_pos",
+                                      ifelse(chimsurv$Pr_MRD_MFC > 0 & chimsurv$Pr_Chim < Ct, "one_is_pos", 
+                                             ifelse(chimsurv$Pr_MRD_MFC == 0 & chimsurv$Pr_Chim < Ct, "MRD_Chim_neg", NA))))
+    
+    #chimsurv$relday <- ifelse(is.na(chimsurv$relday), chimsurv$daysur, chimsurv$relday)
+    
+    fit <-   survfit(Surv(day_chim, relday_td2_comb, delrel_td_comb) ~ mrd_td0, data = chimsurv, id = upn)
+    cox <-     coxph(Surv(day_chim, relday_td2_comb, delrel_td_comb) ~ mrd_td0, data = chimsurv, id = upn) #should be same as above!!
+    cox_adj <- coxph(Surv(day_chim, relday_td2_comb, delrel_td_comb) ~ mrd_td0 +txtype +pro_gvhd_cat +dxgroup +Chim_MFC0 +status_int, data = chimsurv, id = upn)
+    ## construct the survival plots and cox hazard ratios
+    ggsurvplot(fit, data = chimsurv)
+    
+    p_survds <- ggsurvplot(
+      fit,
+      data = chimsurv,
+      size = 1,                       # change line size
+      palette =
+        c("#00CC00", "#FF0101", "orange"),        # custom color palettes
+      #conf.int = TRUE,                  # Add confidence interval
+      #conf.int.style = "step",          # customize style of confidence intervals
+      #pval = TRUE,                      # Add p-value {UNSOLVED: Cannot compute pvalue when using interval censoring}
+      pval.coord = c(0, 0.985),
+      pval.size = 4,
+      risk.table = FALSE,                # Add risk table
+      risk.table.col = "strata",        # Risk table color by groups
+      legend.labs =
+        c("-/-", "+/+", "+/- or -/+"),            # Change legend labels
+      risk.table.height = 0.25,         # Useful to change when you have multiple groups
+      ggtheme = theme_few()+theme(aspect.ratio = 1),
+      censor.shape = "|",
+      censor.size = 3,
+      xlim = c(0,1825),                 # present narrower X axis, but not affect
+      xlab = "days post-allo-HCT",      # customize X axis label.
+      ylim = c(0,1),
+      ylab= "fraction relapse (cumulative)",
+      break.time.by = 365,              # break X axis in time intervals by 'n'.
+      risk.table.y.text.col = T,        # color risk table text annotations.
+      risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+      #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+      #ncensor.plot.height = 0.25,
+      surv.median.line = "hv",          # add the median survival pointer.
+      tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+      fontsize = 3, 
+      legend.title="",
+      fun = "event" 
+    )
+    p_survds$plot <- p_survds$plot + 
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = Inf,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("HR(+/+ vs. -/-)=",
+                                   format(round(summary(cox)[["conf.int"]][1,1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox)[["conf.int"]][1,3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox)[["conf.int"]][1,4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3
+      )+
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = 1,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("adj.HR(+/+ vs. -/-)=",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox_adj)[["conf.int"]][1,4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3
+      )+
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = 0.95,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("HR(+/- or -/+ vs. -/-)=",
+                                   format(round(summary(cox)[["conf.int"]][2,1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox)[["conf.int"]][2,3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox)[["conf.int"]][2,4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3
+      )+
+      ggplot2::annotate(
+        "text",
+        x = Inf, y = 0.90,
+        vjust = 2, hjust = 1,
+        label = capture.output(cat("adj.HR(+/- or -/+ vs. -/-)=",
+                                   format(round(summary(cox_adj)[["conf.int"]][2,1], 1), nsmall = 1),
+                                   " [",
+                                   format(round(summary(cox_adj)[["conf.int"]][2,3], 1), nsmall = 1),
+                                   " to ",
+                                   format(round(summary(cox_adj)[["conf.int"]][2,4], 1), nsmall = 1),
+                                   "] ")),
+        size = 3
+      )
+  }
+  p_survds
+  table(chimsurv[!duplicated(chimsurv$upn),]$mrd_td0)
+  summary(fit)$table[1,"n.max"]
+  summary(fit)$table[2,"n.max"]
+  summary(fit)$table[3,"n.max"]
+  summary(fit)$table
+  
+  summary(cox)
+  summary(cox_adj)
+  ## organize p-values and HRs from simulations in dataframe
+  pval_df <- data.frame(
+    "index"=1,
+    "Chimerism_Threshold" = Ct,
+    "pval"= summary(cox)[["coefficients"]][1,5], 
+    "HR_cox"= summary(cox)[["conf.int"]][1,1],
+    "HR_95lo"= summary(cox)[["conf.int"]][1,3],
+    "HR_95up"= summary(cox)[["conf.int"]][1,4],
+    "pval_adj" = summary(cox_adj)[["coefficients"]][1,5],
+    "HR_cox_adj" = summary(cox_adj)[["conf.int"]][1,1],
+    "HR_95lo_adj" = summary(cox_adj)[["conf.int"]][1,3],
+    "HR_95up_adj" = summary(cox_adj)[["conf.int"]][1,4]
+  )
+  if(exists("pval_dfe")){pval_dfe <- rbind(pval_dfe, pval_df)}else{pval_dfe <- pval_df}
+  print(pval_df)
+}
+
+{ ## fix some limits and ratios
+  ylm_p <- c(0.0001,1)
+  ylm_h <- c(0.001,1000)
+  ra_p <- 2.25*(log10(max(pval_dfe$Chimerism_Threshold))-log10(min(pval_dfe$Chimerism_Threshold)))/
+    (log10(ylm_p[2])-log10(ylm_p[1]))
+  ra_h <- 2.25*(log10(max(pval_dfe$Chimerism_Threshold))-log10(min(pval_dfe$Chimerism_Threshold)))/
+    (log10(ylm_h[2])-log10(ylm_h[1]))
+  ra_f <- 1*(log10(max(pval_dfe$Chimerism_Threshold))-log10(min(pval_dfe$Chimerism_Threshold)))/1
+}
+
+## fix dataframe: p-val are NA if 95%CI are Inf
+pval_dfe$pval <- ifelse(pval_dfe$HR_95up == Inf, NA, pval_dfe$pval)
+pval_dfe$pval_adj <- ifelse(pval_dfe$HR_95up_adj == Inf, NA, pval_dfe$pval_adj)
+
+
+## p-values
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=pval))+
+  geom_smooth(size=2, method = "gam")+
+  geom_line()+
+  scale_y_log10(name = "", #P-values (Cox)
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1))+
+  #scale_x_log10(name = "Chimerism Threshold",
+  #              breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+  #              labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_log10(name = "", # chimerism threshold
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  geom_hline(yintercept = 0.05, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_p, ylim = ylm_p)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## Hazard ratios
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=HR_cox, ymin= HR_95lo, ymax= HR_95up, group= index))+
+  geom_ribbon(alpha=0.25)+
+  geom_line(size=1, color= "olivedrab4")+
+  scale_y_log10(name = "", #Hazard Ratios & 95% CI (Cox)
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000))+
+  #scale_x_log10(name = "Chimerism Threshold",
+  #              breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+  #              labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_log10(name = "", # chimerism threshold
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  geom_hline(yintercept = 1, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_h, ylim = ylm_h)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## p-values adjusted
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=pval_adj))+
+  geom_smooth(size=2, method = "gam")+
+  geom_line()+
+  scale_y_log10(name = "", #P-values (Cox)
+                breaks= c(0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.0001, 0.001, 0.01, 0.1, 1))+
+  #scale_x_log10(name = "Chimerism Threshold",
+  #              breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+  #              labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_log10(name = "", # chimerism threshold
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  geom_hline(yintercept = 0.05, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_p, ylim = ylm_p)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+## Hazard ratios adjusted
+ggplot(pval_dfe, aes(x= Chimerism_Threshold, y=HR_cox_adj, ymin= HR_95lo_adj, ymax= HR_95up_adj, group= index))+
+  geom_ribbon(alpha=0.25)+
+  geom_line(size=1, color= "olivedrab4")+
+  scale_y_log10(name = "", #Hazard Ratios & 95% CI (Cox)
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000))+
+  #scale_x_log10(name = "Chimerism Threshold",
+  #              breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+  #              labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  scale_x_log10(name = "", # chimerism threshold
+                breaks= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1),
+                labels= c(0.00001, 0.0001, 0.001, 0.01, 0.1, 1))+
+  geom_hline(yintercept = 1, linetype= "dashed", color= "orange", alpha= 1, size= 1)+
+  coord_fixed(ratio = ra_h, ylim = ylm_h)+
+  theme_few() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+gc()
+
+```
+## 30- The post-transplant Chimerism Threshold Model to improve relapse in addition to Pre-Transplant MRD or to patients with Active Disease
+
+```{r}
+i <- 1   # must remain i=1 as MFC is detected in BMA only, also the model breaks if chosing other tissues
+m <- c("BMA", "PB_CD33", "PB_CD3") 
+dt <- 540 # max days post-tx to show
+chimsurv <- chimhct
+
+# select your disease group(s)
+chimsurv <- chimsurv[which(chimsurv$material...69 %in% m[[i]]
+                           & chimsurv$avail_timep %in% c("multi_last", "multi", "single") 
+                           & chimsurv$dxgroup %in% c("MDS", "ANL", "ALL")
+),]
+
+# some stats
+length(unique(chimsurv$upn))
+table(is.na(chimsurv$Pr_Chim))
+table(is.na(chimsurv$Pr_MRD_MFC))
+length(unique(subset(chimsurv, !is.na(Pr_MRD_MFC))$upn))
+length(subset(chimsurv, !is.na(Pr_MRD_MFC))$upn)
+
+
+Ct <-  0.005
+chimsurv$mrd_td0 <- NA
+chimsurv$mrd_td0 <- ifelse(chimsurv$Pr_MRD_MFC > 0 & chimsurv$Pr_Chim >= Ct,
+                           chimsurv$mrd_td0 <- 1, # 1 = MRD_Chim_double_pos
+                           ifelse(chimsurv$Pr_MRD_MFC == 0 & chimsurv$Pr_Chim >= Ct, 0,  # 0 = not_double_pos
+                                  ifelse(chimsurv$Pr_MRD_MFC > 0 & chimsurv$Pr_Chim < Ct, 0, 
+                                         ifelse(chimsurv$Pr_MRD_MFC == 0 & chimsurv$Pr_Chim < Ct, 0, NA))))
+table(chimsurv$mrd_td0, useNA = "ifany")
+
+## use this bit to see versus pre-tx MRD 
+levels(as.factor(chimsurv$Chim_MFC0))
+chimsurv$mrd_td0 <- ifelse(chimsurv$Chim_MFC0 == 0 & chimsurv$mrd_td0 == 0, 0,
+                           ifelse(chimsurv$Chim_MFC0 == 1 & chimsurv$mrd_td0 == 0, 1, 
+                                  ifelse(chimsurv$Chim_MFC0 == 0 & chimsurv$mrd_td0 == 1, 2,
+                                         ifelse(chimsurv$Chim_MFC0 == 1 & chimsurv$mrd_td0 == 1, 3, NA)
+                                  )
+                           )
+)
+table(chimsurv$mrd_td0, useNA = "ifany")
+
+## use this bit to see versus disease status at transplant (active vs. otherwise)
+levels(as.factor(chimsurv$status_int))
+lv<-levels(as.factor(chimsurv$status_int))[2:length(levels(as.factor(chimsurv$status_int)))]
+chimsurv$mrd_td0 <- ifelse(chimsurv$status_int %in% lv & chimsurv$mrd_td0 == 0, 0,
+                           ifelse(chimsurv$status_int == "ActiveDis" & chimsurv$mrd_td0 == 0, 1, 
+                                  ifelse(chimsurv$status_int %in% lv & chimsurv$mrd_td0 == 1, 2,
+                                         ifelse(chimsurv$status_int == "ActiveDis" & chimsurv$mrd_td0 == 1, 3, NA)
+                                  )
+                           )
+)
+table(chimsurv$mrd_td0, useNA = "ifany") 
+
+fit <-   survfit(Surv(day_chim, relday_td2_comb, delrel_td_comb) ~ mrd_td0, data = chimsurv, id = upn)
+cox <-     coxph(Surv(day_chim, relday_td2_comb, delrel_td_comb) ~ mrd_td0, data = chimsurv, id = upn) #should be same as above!!
+cox_adj <- coxph(Surv(day_chim, relday_td2_comb, delrel_td_comb) ~ mrd_td0 +txtype +pro_gvhd_cat +dxgroup +Chim_MFC0 +status_int, data = chimsurv, id = upn)
+## construct the survival plots and cox hazard ratios
+ggsurvplot(fit, data = chimsurv)
+
+
+p_survds <- ggsurvplot(
+  fit,
+  data = chimsurv,
+  size = 1,                       # change line size
+  linetype = c(1, 2, 1, 2),
+  palette =
+    c("#00CC00", "#00CC00", "#FF0101", "#FF0101"),        # custom color palettes
+  # palette =
+  #   c("#00CC00", "#FF0101"),        # custom color palettes
+  #conf.int = TRUE,                  # Add confidence interval
+  #conf.int.style = "step",          # customize style of confidence intervals
+  #pval = TRUE,                      # Add p-value {UNSOLVED: Cannot compute pvalue when using interval censoring}
+  pval.coord = c(0, 0.985),
+  pval.size = 4,
+  risk.table = FALSE,                # Add risk table
+  risk.table.col = "strata",        # Risk table color by groups
+  # legend.labs =
+  #   c("MRD becomes \nor remains neg", "MRD becomes \nor remains pos"),            # Change legend labels
+  risk.table.height = 0.25,         # Useful to change when you have multiple groups
+  ggtheme = theme_few()+theme(aspect.ratio = 1),
+  censor.shape = "|",
+  censor.size = 3,
+  xlim = c(0,1825),                 # present narrower X axis, but not affect
+  xlab = "days post-allo-HCT",      # customize X axis label.
+  ylim = c(0,1),
+  ylab= "fraction relapse (cumulative)",
+  break.time.by = 365,              # break X axis in time intervals by 'n'.
+  risk.table.y.text.col = T,        # color risk table text annotations.
+  risk.table.y.text = FALSE,        # show bars instead of names in text annotations in legend of risk table
+  #ncensor.plot = TRUE,              # plot the number of censored subjects at time t
+  #ncensor.plot.height = 0.25,
+  surv.median.line = "hv",          # add the median survival pointer.
+  tables.theme =  theme(aspect.ratio = .3) + theme_cleantable(),
+  fontsize = 3, 
+  legend.title="",
+  fun = "event" 
+)
+# p_survds$plot <- p_survds$plot +
+#   ggplot2::annotate(
+#     "text",
+#     x = Inf, y = Inf,
+#     vjust = 2, hjust = 1,
+#     label = capture.output(cat("HR=",
+#                                format(round(summary(cox)[["conf.int"]][1], 1), nsmall = 1),
+#                                " [",
+#                                format(round(summary(cox)[["conf.int"]][3], 1), nsmall = 1),
+#                                " to ",
+#                                format(round(summary(cox)[["conf.int"]][4], 1), nsmall = 1),
+#                                "] ")),
+#     size = 3.5
+#   )+
+#   ggplot2::annotate(
+#     "text",
+#     x = Inf, y = 0.95,
+#     vjust = 2, hjust = 1,
+#     label = capture.output(cat("adj.HR=",
+#                                format(round(summary(cox_adj)[["conf.int"]][1,1], 1), nsmall = 1),
+#                                " [",
+#                                format(round(summary(cox_adj)[["conf.int"]][1,3], 1), nsmall = 1),
+#                                " to ",
+#                                format(round(summary(cox_adj)[["conf.int"]][1,4], 1), nsmall = 1),
+#                                "] ")),
+#     size = 3.5
+#   )
+
+p_survds
+length(unique(chimsurv$upn))
+summary(cox)$conf.int
+summary(fit)$table[1,"n.max"]
+summary(fit)$table[2,"n.max"]
+summary(fit)$table
+length(unique(subset(chimsurv, !is.na(Pr_MRD_MFC))$upn))
+
+```

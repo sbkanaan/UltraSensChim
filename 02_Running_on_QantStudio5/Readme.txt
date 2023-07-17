@@ -1,0 +1,1 @@
+Don't forget to export results as a .csv file after hitting "Analyze" and your run has finished and your experiment has passed initial quality control.
